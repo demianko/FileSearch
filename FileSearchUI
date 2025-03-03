@@ -14,7 +14,7 @@ class FileSearchApp:
 
         self.folder_path = tk.StringVar(value="D:/ABogue/Books/")
         self.search_patterns = tk.StringVar(value="pytorch, machine learning, -ai")
-        self.extensions = tk.StringVar(value="pdf, txt")
+        self.extensions = tk.StringVar(value="")  # Now empty by default (searches all files)
         self.sort_by = tk.StringVar(value="published, publisher, modified")
         self.publisher_filters = tk.StringVar()
         self.limit = tk.IntVar(value=10)
@@ -30,7 +30,7 @@ class FileSearchApp:
         ttk.Label(frame, textvariable=self.folder_path, foreground="green").grid(row=0, column=1, sticky=tk.W, padx=5)
 
         self.add_input(frame, "Search Patterns:", self.search_patterns, 1)
-        self.add_input(frame, "File Extensions:", self.extensions, 2)
+        self.add_input(frame, "File Extensions (Leave blank for all):", self.extensions, 2)
         self.add_input(frame, "Sort By:", self.sort_by, 3)
         self.add_input(frame, "Publisher Filters:", self.publisher_filters, 4)
 
@@ -68,16 +68,26 @@ class FileSearchApp:
             return
 
         include_patterns, exclude_patterns = self.get_patterns(self.search_patterns.get())
-        extensions = [ext.strip().lower() for ext in self.extensions.get().split(",")]
+
+        # Process file extensions (if blank, include all)
+        ext_input = self.extensions.get().strip().lower()
+        extensions = [ext.strip() for ext in ext_input.split(",") if ext] if ext_input else None  # None means all files
+
         sort_by = [s.strip().lower() for s in self.sort_by.get().split(",")]
         include_publishers, exclude_publishers = self.get_patterns(self.publisher_filters.get())
 
         files = []
         for file in folder.glob("**/*"):  # Search in all subdirectories
-            if not file.is_file() or file.suffix[1:].lower() not in extensions:
+            if not file.is_file():
                 continue
 
             filename = file.name.lower()
+            file_ext = file.suffix[1:].lower()  # Get the file extension (without the dot)
+
+            # If extensions are specified, only include matching ones
+            if extensions and file_ext not in extensions:
+                continue
+
             if include_patterns and not any(p in filename for p in include_patterns):
                 continue
             if any(p in filename for p in exclude_patterns):
