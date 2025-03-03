@@ -1,5 +1,5 @@
 # FileSearch
-* search files in the local directory.
+* select the local folder to search files within and its sub-directories
 * Supports searching for multiple patterns
 * non-English file name search
 * file extension search: if not specified, search all files.
