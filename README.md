@@ -4,7 +4,11 @@
 * non-English file name search
 * file extension search: if not specified, search all files.
 * filter: filter the search results
-  
+
+version 1.1.4
+* search progress bar is added
+![image](https://github.com/user-attachments/assets/bcfe0b9f-a9de-40ce-8cc6-98638b30f28b)
+
 version 1.1.3
 * Brighter colors for highlighting search patterns.
   
