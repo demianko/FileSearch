@@ -43,18 +43,18 @@ class FileSearchApp:
 
         ttk.Button(frame, text="Search Files", command=self.search_files).grid(row=6, column=0, columnspan=2, pady=10)
 
-        # Progress bar
+        
         self.progress = ttk.Progressbar(self.root, orient="horizontal", length=self.WIDTH-30, mode="determinate")
         self.progress.pack(pady=5)
 
-        # Filter input field
+        
         ttk.Label(self.root, text="Filter Results:").pack(pady=5)
         self.filter_var = tk.StringVar()
         self.filter_entry = ttk.Entry(self.root, textvariable=self.filter_var, width=50)
         self.filter_entry.pack()
         self.filter_entry.bind("<KeyRelease>", self.filter_results)  # Event binding
 
-        # Results Textbox with Highlighting
+        
         self.results_frame = ttk.Frame(self.root, padding=10)
         self.results_frame.pack(fill=tk.BOTH, expand=True)
         self.results_text = tk.Text(self.results_frame, wrap=tk.WORD, height=15, font=("Arial", 11))
@@ -71,13 +71,11 @@ class FileSearchApp:
             self.folder_path.set(folder)
 
     def get_patterns(self, pattern_str):
-        """ Processes search patterns to separate inclusion and exclusion terms. """
         patterns = [p.strip() for p in pattern_str.split(",") if p.strip()]
         return ([p for p in patterns if not p.startswith("-")],  # Include list
                 [p[1:] for p in patterns if p.startswith("-")])  # Exclude list
 
     def extract_publisher(self, filename):
-        """ Extracts the publisher name from the filename (before the first dash). """
         match = re.match(r'^([^-]+)-', filename)
         return match.group(1).strip().lower() if match else "unknown"
 
@@ -103,8 +101,7 @@ class FileSearchApp:
             return
 
         include_patterns, exclude_patterns = self.get_patterns(self.search_patterns.get())
-
-        # Process file extensions (if blank, include all)
+        
         ext_input = self.extensions.get().strip().lower()
         extensions = [ext.strip() for ext in ext_input.split(",") if ext] if ext_input else None  # None means all files
 
@@ -151,15 +148,13 @@ class FileSearchApp:
             self.root.update_idletasks()
 
         files.sort(key=lambda x: self.get_sort_key(x, sort_by), reverse=True)
-
-        # Store all results before filtering
+        
         self.all_results = files[:self.limit.get()]
         self.display_results(self.all_results, include_patterns)
 
         self.progress["value"] = 0  # Reset progress bar
 
     def open_file(self, event):
-        """ Opens the selected file when double-clicked. """
         try:
             selected_text = self.results_text.get(tk.SEL_FIRST, tk.SEL_LAST).strip()
             file_path = Path(self.folder_path.get()) / selected_text
@@ -169,17 +164,14 @@ class FileSearchApp:
             pass  # Prevents error if no text is selected
 
     def filter_results(self, event):
-        """ Dynamically filters the displayed results based on user input. """
         query = self.filter_var.get().lower()
         filtered_files = [f for f in self.all_results if query in f[0].name.lower()]
         self.display_results(filtered_files, self.search_patterns.get().split(","))
 
     def generate_bright_colors(self, num_colors):
-        """ Generates a list of bright colors for highlighting. """
         return [f"#{random.randint(180, 255):02X}{random.randint(100, 200):02X}{random.randint(50, 150):02X}" for _ in range(num_colors)]
 
     def display_results(self, files, highlight_patterns):
-        """ Displays the results and highlights search patterns. """
         self.results_text.delete("1.0", tk.END)
 
         colors = self.generate_bright_colors(len(highlight_patterns))
@@ -194,7 +186,6 @@ class FileSearchApp:
                 self.highlight_pattern(file_text, pattern, color)
 
     def highlight_pattern(self, text, pattern, color):
-        """ Highlights a search pattern in the results text box. """
         start_index = "1.0"
         while True:
             start_index = self.results_text.search(pattern, start_index, stopindex=tk.END, nocase=True)
