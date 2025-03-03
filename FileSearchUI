@@ -8,13 +8,16 @@ import random
 
 
 class FileSearchApp:
+    WIDTH = 1200
+    HEIGHT = 1000
     def __init__(self, root):
         self.root = root
         self.root.title("File Search and Sort")
-        self.root.geometry("1200x800")
+        geo = f"{self.WIDTH}x{self.HEIGHT}"
+        self.root.geometry(geo)
 
         self.folder_path = tk.StringVar(value="D:/ABogue/Books/")
-        self.search_patterns = tk.StringVar(value="pytorch, python")
+        self.search_patterns = tk.StringVar(value="python, pytorch")
         self.extensions = tk.StringVar(value="")  # Blank means search all
         self.sort_by = tk.StringVar(value="published, publisher, modified")
         self.publisher_filters = tk.StringVar()
@@ -30,7 +33,7 @@ class FileSearchApp:
         ttk.Button(frame, text="Select Folder", command=self.select_folder).grid(row=0, column=0, sticky=tk.W, padx=5)
         ttk.Label(frame, textvariable=self.folder_path, foreground="green").grid(row=0, column=1, sticky=tk.W, padx=5)
 
-        self.add_input(frame, "Search Patterns (Supports Korean):", self.search_patterns, 1)
+        self.add_input(frame, "Search Patterns:", self.search_patterns, 1)
         self.add_input(frame, "File Extensions (Leave blank for all):", self.extensions, 2)
         self.add_input(frame, "Sort By:", self.sort_by, 3)
         self.add_input(frame, "Publisher Filters:", self.publisher_filters, 4)
@@ -39,6 +42,10 @@ class FileSearchApp:
         ttk.Entry(frame, textvariable=self.limit, width=10).grid(row=5, column=1, sticky=tk.W, padx=5)
 
         ttk.Button(frame, text="Search Files", command=self.search_files).grid(row=6, column=0, columnspan=2, pady=10)
+
+        # Progress bar
+        self.progress = ttk.Progressbar(self.root, orient="horizontal", length=self.WIDTH-30, mode="determinate")
+        self.progress.pack(pady=5)
 
         # Filter input field
         ttk.Label(self.root, text="Filter Results:").pack(pady=5)
@@ -63,6 +70,33 @@ class FileSearchApp:
         if folder:
             self.folder_path.set(folder)
 
+    def get_patterns(self, pattern_str):
+        """ Processes search patterns to separate inclusion and exclusion terms. """
+        patterns = [p.strip() for p in pattern_str.split(",") if p.strip()]
+        return ([p for p in patterns if not p.startswith("-")],  # Include list
+                [p[1:] for p in patterns if p.startswith("-")])  # Exclude list
+
+    def extract_publisher(self, filename):
+        """ Extracts the publisher name from the filename (before the first dash). """
+        match = re.match(r'^([^-]+)-', filename)
+        return match.group(1).strip().lower() if match else "unknown"
+
+    def extract_year(self, filename):
+        match = re.search(r'\b(19\d{2}|20\d{2})\b', filename)
+        return int(match.group()) if match else 0
+
+    def get_sort_key(self, file_data, sort_by):
+        file, year, publisher, modified = file_data
+        key = []
+        for criteria in sort_by:
+            if criteria == "published":
+                key.append(year)
+            elif criteria == "publisher":
+                key.append(publisher)
+            elif criteria == "modified":
+                key.append(modified)
+        return tuple(key)
+
     def search_files(self):
         folder = Path(self.folder_path.get())
         if not folder.exists():
@@ -77,8 +111,17 @@ class FileSearchApp:
         sort_by = [s.strip().lower() for s in self.sort_by.get().split(",")]
         include_publishers, exclude_publishers = self.get_patterns(self.publisher_filters.get())
 
+        # Get total number of files
+        total_files = sum(1 for _ in folder.glob("**/*") if _.is_file())
+        if total_files == 0:
+            return
+
+        self.progress["value"] = 0
+        self.progress["maximum"] = total_files
+        self.root.update_idletasks()  # Update progress bar
+
         files = []
-        for file in folder.glob("**/*"):  # Search in all subdirectories
+        for i, file in enumerate(folder.glob("**/*")):  # Search in all subdirectories
             if not file.is_file():
                 continue
 
@@ -103,36 +146,37 @@ class FileSearchApp:
 
             files.append((file, self.extract_year(filename), publisher, file.stat().st_mtime))
 
+            # Update progress bar
+            self.progress["value"] = i + 1
+            self.root.update_idletasks()
+
         files.sort(key=lambda x: self.get_sort_key(x, sort_by), reverse=True)
 
         # Store all results before filtering
         self.all_results = files[:self.limit.get()]
         self.display_results(self.all_results, include_patterns)
 
-    def get_patterns(self, pattern_str):
-        patterns = [p.strip() for p in pattern_str.split(",") if p.strip()]
-        return ([p for p in patterns if not p.startswith("-")],
-                [p[1:] for p in patterns if p.startswith("-")])
+        self.progress["value"] = 0  # Reset progress bar
 
-    def extract_year(self, filename):
-        match = re.search(r'\b(19\d{2}|20\d{2})\b', filename)
-        return int(match.group()) if match else 0
+    def open_file(self, event):
+        """ Opens the selected file when double-clicked. """
+        try:
+            selected_text = self.results_text.get(tk.SEL_FIRST, tk.SEL_LAST).strip()
+            file_path = Path(self.folder_path.get()) / selected_text
+            if file_path.exists():
+                webbrowser.open(file_path.as_uri())
+        except tk.TclError:
+            pass  # Prevents error if no text is selected
 
-    def extract_publisher(self, filename):
-        match = re.match(r'([^\-]+)-', filename)
-        return match.group(1).strip().lower() if match else "unknown"
+    def filter_results(self, event):
+        """ Dynamically filters the displayed results based on user input. """
+        query = self.filter_var.get().lower()
+        filtered_files = [f for f in self.all_results if query in f[0].name.lower()]
+        self.display_results(filtered_files, self.search_patterns.get().split(","))
 
-    def get_sort_key(self, file_data, sort_by):
-        file, year, publisher, modified = file_data
-        key = []
-        for criteria in sort_by:
-            if criteria == "published":
-                key.append(year)
-            elif criteria == "publisher":
-                key.append(publisher)
-            elif criteria == "modified":
-                key.append(modified)
-        return tuple(key)
+    def generate_bright_colors(self, num_colors):
+        """ Generates a list of bright colors for highlighting. """
+        return [f"#{random.randint(180, 255):02X}{random.randint(100, 200):02X}{random.randint(50, 150):02X}" for _ in range(num_colors)]
 
     def display_results(self, files, highlight_patterns):
         """ Displays the results and highlights search patterns. """
@@ -160,23 +204,6 @@ class FileSearchApp:
             self.results_text.tag_add(pattern, start_index, end_index)
             self.results_text.tag_config(pattern, foreground=color, font=("Arial", 11, "bold"))
             start_index = end_index
-
-    def generate_bright_colors(self, num_colors):
-        """ Generates a list of bright colors for highlighting. """
-        return [f"#{random.randint(180, 255):02X}{random.randint(100, 200):02X}{random.randint(50, 150):02X}" for _ in range(num_colors)]
-
-    def filter_results(self, event):
-        """ Dynamically filters the displayed results based on user input. """
-        query = self.filter_var.get().lower()
-        filtered_files = [f for f in self.all_results if query in f[0].name.lower()]
-        self.display_results(filtered_files, self.search_patterns.get().split(","))
-
-    def open_file(self, event):
-        selected = self.results_text.get(tk.SEL_FIRST, tk.SEL_LAST).strip()
-        if selected:
-            file_path = Path(self.folder_path.get()) / selected
-            if file_path.exists():
-                webbrowser.open(file_path.as_uri())
 
 
 if __name__ == "__main__":
