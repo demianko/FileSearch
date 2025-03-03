@@ -1,6 +1,6 @@
 # FileSearch
 * select the local folder to search files within and its sub-directories
-* Supports searching for multiple patterns
+* Supports searching for multiple patterns: add multiple word with comma separated, add dash("-") if want to exclude the word. e.g. "python, pytorch, -ai", will search files containing "python" or "pytorch" but excludes files containing "ai"
 * non-English file name search
 * file extension search: if not specified, search all files.
 * filter: filter the search results
