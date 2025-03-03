@@ -9,6 +9,7 @@ version 1.1.3
 * Brighter colors for highlighting search patterns.
   
 
-![image](https://github.com/user-attachments/assets/a3d93cf5-f568-40ba-bb17-57b74b3ac0ee)
+![image](https://github.com/user-attachments/assets/d23c32c1-fdeb-42d6-9ac1-e7c1a75a43dc)
+
 
 
