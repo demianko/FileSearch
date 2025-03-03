@@ -113,7 +113,7 @@ class FileSearchApp:
     def display_results(self, files):
         self.results_list.delete(0, tk.END)
         for file, year, publisher, _ in files:
-            self.results_list.insert(tk.END, f"{file.name} ({publisher}, {year})")
+            self.results_list.insert(tk.END, f"{file.name}")
 
     def open_file(self, event):
         selected = self.results_list.curselection()
