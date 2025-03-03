@@ -10,7 +10,7 @@ class FileSearchApp:
     def __init__(self, root):
         self.root = root
         self.root.title("File Search and Sort")
-        self.root.geometry("600x500")
+        self.root.geometry("600x550")
 
         self.folder_path = tk.StringVar(value="D:/ABogue/Books/")
         self.search_patterns = tk.StringVar(value="pytorch, machine learning, -ai")
@@ -19,6 +19,7 @@ class FileSearchApp:
         self.publisher_filters = tk.StringVar()
         self.limit = tk.IntVar(value=10)
 
+        self.all_results = []  # Store all search results
         self.create_widgets()
 
     def create_widgets(self):
@@ -38,6 +39,14 @@ class FileSearchApp:
 
         ttk.Button(frame, text="Search Files", command=self.search_files).grid(row=6, column=0, columnspan=2, pady=10)
 
+        # Filter input field
+        ttk.Label(self.root, text="Filter Results:").pack(pady=5)
+        self.filter_var = tk.StringVar()
+        self.filter_entry = ttk.Entry(self.root, textvariable=self.filter_var, width=50)
+        self.filter_entry.pack()
+        self.filter_entry.bind("<KeyRelease>", self.filter_results)  # Event binding
+
+        # Results listbox
         self.results_frame = ttk.Frame(self.root, padding=10)
         self.results_frame.pack(fill=tk.BOTH, expand=True)
         self.results_list = tk.Listbox(self.results_frame, height=15, font=("Arial", 11))
@@ -64,7 +73,7 @@ class FileSearchApp:
         include_publishers, exclude_publishers = self.get_patterns(self.publisher_filters.get())
 
         files = []
-        for file in folder.glob("**/*"):
+        for file in folder.glob("**/*"):  # Search in all subdirectories
             if not file.is_file() or file.suffix[1:].lower() not in extensions:
                 continue
 
@@ -83,7 +92,10 @@ class FileSearchApp:
             files.append((file, self.extract_year(filename), publisher, file.stat().st_mtime))
 
         files.sort(key=lambda x: self.get_sort_key(x, sort_by), reverse=True)
-        self.display_results(files[:self.limit.get()])
+
+        # Store all results before filtering
+        self.all_results = files[:self.limit.get()]
+        self.display_results(self.all_results)
 
     def get_patterns(self, pattern_str):
         patterns = [p.strip() for p in pattern_str.split(",") if p.strip()]
@@ -114,6 +126,12 @@ class FileSearchApp:
         self.results_list.delete(0, tk.END)
         for file, year, publisher, _ in files:
             self.results_list.insert(tk.END, f"{file.name}")
+
+    def filter_results(self, event):
+        """ Dynamically filters the displayed results based on user input. """
+        query = self.filter_var.get().lower()
+        filtered_files = [f for f in self.all_results if query in f[0].name.lower()]
+        self.display_results(filtered_files)
 
     def open_file(self, event):
         selected = self.results_list.curselection()
