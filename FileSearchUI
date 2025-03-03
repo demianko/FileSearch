@@ -42,11 +42,9 @@ class FileSearchApp:
         ttk.Entry(frame, textvariable=self.limit, width=10).grid(row=5, column=1, sticky=tk.W, padx=5)
 
         ttk.Button(frame, text="Search Files", command=self.search_files).grid(row=6, column=0, columnspan=2, pady=10)
-
         
         self.progress = ttk.Progressbar(self.root, orient="horizontal", length=self.WIDTH-30, mode="determinate")
         self.progress.pack(pady=5)
-
         
         ttk.Label(self.root, text="Filter Results:").pack(pady=5)
         self.filter_var = tk.StringVar()
@@ -107,8 +105,7 @@ class FileSearchApp:
 
         sort_by = [s.strip().lower() for s in self.sort_by.get().split(",")]
         include_publishers, exclude_publishers = self.get_patterns(self.publisher_filters.get())
-
-        # Get total number of files
+        
         total_files = sum(1 for _ in folder.glob("**/*") if _.is_file())
         if total_files == 0:
             return
