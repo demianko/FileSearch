@@ -16,7 +16,7 @@ class FileSearchApp:
         geo = f"{self.WIDTH}x{self.HEIGHT}"
         self.root.geometry(geo)
 
-        self.folder_path = tk.StringVar(value="D:/ABogue/Books/")
+        self.folder_path = tk.StringVar(value="C:/temp/")
         self.search_patterns = tk.StringVar(value="python, pytorch")
         self.extensions = tk.StringVar(value="")  # Blank means search all
         self.sort_by = tk.StringVar(value="published, publisher, modified")
