@@ -4,17 +4,18 @@ import tkinter as tk
 from tkinter import filedialog, ttk
 from pathlib import Path
 import webbrowser
+import random
 
 
 class FileSearchApp:
     def __init__(self, root):
         self.root = root
         self.root.title("File Search and Sort")
-        self.root.geometry("600x550")
+        self.root.geometry("1200x800")
 
         self.folder_path = tk.StringVar(value="D:/ABogue/Books/")
-        self.search_patterns = tk.StringVar(value="pytorch, machine learning, -ai")
-        self.extensions = tk.StringVar(value="")  # Now empty by default (searches all files)
+        self.search_patterns = tk.StringVar(value="pytorch, python")
+        self.extensions = tk.StringVar(value="")  # Blank means search all
         self.sort_by = tk.StringVar(value="published, publisher, modified")
         self.publisher_filters = tk.StringVar()
         self.limit = tk.IntVar(value=10)
@@ -29,7 +30,7 @@ class FileSearchApp:
         ttk.Button(frame, text="Select Folder", command=self.select_folder).grid(row=0, column=0, sticky=tk.W, padx=5)
         ttk.Label(frame, textvariable=self.folder_path, foreground="green").grid(row=0, column=1, sticky=tk.W, padx=5)
 
-        self.add_input(frame, "Search Patterns:", self.search_patterns, 1)
+        self.add_input(frame, "Search Patterns (Supports Korean):", self.search_patterns, 1)
         self.add_input(frame, "File Extensions (Leave blank for all):", self.extensions, 2)
         self.add_input(frame, "Sort By:", self.sort_by, 3)
         self.add_input(frame, "Publisher Filters:", self.publisher_filters, 4)
@@ -46,12 +47,12 @@ class FileSearchApp:
         self.filter_entry.pack()
         self.filter_entry.bind("<KeyRelease>", self.filter_results)  # Event binding
 
-        # Results listbox
+        # Results Textbox with Highlighting
         self.results_frame = ttk.Frame(self.root, padding=10)
         self.results_frame.pack(fill=tk.BOTH, expand=True)
-        self.results_list = tk.Listbox(self.results_frame, height=15, font=("Arial", 11))
-        self.results_list.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        self.results_list.bind("<Double-Button-1>", self.open_file)
+        self.results_text = tk.Text(self.results_frame, wrap=tk.WORD, height=15, font=("Arial", 11))
+        self.results_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.results_text.bind("<Double-Button-1>", self.open_file)
 
     def add_input(self, frame, label, var, row):
         ttk.Label(frame, text=label).grid(row=row, column=0, sticky=tk.W, padx=5)
@@ -88,9 +89,10 @@ class FileSearchApp:
             if extensions and file_ext not in extensions:
                 continue
 
-            if include_patterns and not any(p in filename for p in include_patterns):
+            # Use case-insensitive Unicode matching (supports Korean)
+            if include_patterns and not any(re.search(re.escape(p), filename, re.IGNORECASE) for p in include_patterns):
                 continue
-            if any(p in filename for p in exclude_patterns):
+            if any(re.search(re.escape(p), filename, re.IGNORECASE) for p in exclude_patterns):
                 continue
 
             publisher = self.extract_publisher(filename)
@@ -105,7 +107,7 @@ class FileSearchApp:
 
         # Store all results before filtering
         self.all_results = files[:self.limit.get()]
-        self.display_results(self.all_results)
+        self.display_results(self.all_results, include_patterns)
 
     def get_patterns(self, pattern_str):
         patterns = [p.strip() for p in pattern_str.split(",") if p.strip()]
@@ -132,22 +134,47 @@ class FileSearchApp:
                 key.append(modified)
         return tuple(key)
 
-    def display_results(self, files):
-        self.results_list.delete(0, tk.END)
+    def display_results(self, files, highlight_patterns):
+        """ Displays the results and highlights search patterns. """
+        self.results_text.delete("1.0", tk.END)
+
+        colors = self.generate_bright_colors(len(highlight_patterns))
+        color_map = dict(zip(highlight_patterns, colors))
+
         for file, year, publisher, _ in files:
-            self.results_list.insert(tk.END, f"{file.name}")
+            file_text = f"{file.name}\n"
+            self.results_text.insert(tk.END, file_text)
+
+            # Apply highlighting for each search pattern
+            for pattern, color in color_map.items():
+                self.highlight_pattern(file_text, pattern, color)
+
+    def highlight_pattern(self, text, pattern, color):
+        """ Highlights a search pattern in the results text box. """
+        start_index = "1.0"
+        while True:
+            start_index = self.results_text.search(pattern, start_index, stopindex=tk.END, nocase=True)
+            if not start_index:
+                break
+            end_index = f"{start_index}+{len(pattern)}c"
+            self.results_text.tag_add(pattern, start_index, end_index)
+            self.results_text.tag_config(pattern, foreground=color, font=("Arial", 11, "bold"))
+            start_index = end_index
+
+    def generate_bright_colors(self, num_colors):
+        """ Generates a list of bright colors for highlighting. """
+        return [f"#{random.randint(180, 255):02X}{random.randint(100, 200):02X}{random.randint(50, 150):02X}" for _ in range(num_colors)]
 
     def filter_results(self, event):
         """ Dynamically filters the displayed results based on user input. """
         query = self.filter_var.get().lower()
         filtered_files = [f for f in self.all_results if query in f[0].name.lower()]
-        self.display_results(filtered_files)
+        self.display_results(filtered_files, self.search_patterns.get().split(","))
 
     def open_file(self, event):
-        selected = self.results_list.curselection()
+        selected = self.results_text.get(tk.SEL_FIRST, tk.SEL_LAST).strip()
         if selected:
-            file_name = self.results_list.get(selected[0]).split(" (")[0]
-            file_path = Path(self.folder_path.get()) / file_name
+            file_path = Path(self.folder_path.get()) / selected
             if file_path.exists():
                 webbrowser.open(file_path.as_uri())
 
