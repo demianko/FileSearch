@@ -13,12 +13,12 @@ class FileSearchApp:
         self.root.title("File Search and Sort")
         self.root.geometry("1200x1000")
 
-        self.folder_path = tk.StringVar(value="c:/temp/")
+        self.folder_path = tk.StringVar(value="D:/ABogue/Books/")
         self.search_patterns = tk.StringVar(value="pytorch, python")
         self.extensions = tk.StringVar(value="pdf, txt")
         self.sort_by = tk.StringVar(value="published, publisher, modified")
         self.publisher_filters = tk.StringVar()
-        self.limit = tk.IntVar(value=10)
+        self.limit = tk.IntVar(value=100)
 
         self.all_results = []  # Store all search results
         self.create_widgets()
@@ -38,7 +38,13 @@ class FileSearchApp:
         ttk.Label(frame, text="Limit:").grid(row=5, column=0, sticky=tk.W, padx=5)
         ttk.Entry(frame, textvariable=self.limit, width=10).grid(row=5, column=1, sticky=tk.W, padx=5)
 
-        ttk.Button(frame, text="Search Files", command=self.search_files).grid(row=6, column=0, columnspan=2, pady=10)
+        #ttk.Button(frame, text="Search Files", command=self.search_files).grid(row=6, column=0, columnspan=2, pady=5)
+        ttk.Button(frame, text="Search Files", command=self.search_files).grid(row=6, column=0, sticky=tk.W, pady=5)
+
+
+        #ttk.Button(frame, text="By Published", command=self.by_published).grid(row=7, column=0, sticky=tk.W, pady=10)
+        #ttk.Button(frame, text="By Publisher", command=self.by_publisher).grid(row=8, column=0, sticky=tk.W,pady=10)
+        #ttk.Button(frame, text="By Date", command=self.by_modified_date).grid(row=9, column=0, sticky=tk.W, pady=10)
 
         # Progress bar
         self.progress = ttk.Progressbar(self.root, orient="horizontal", length=480, mode="determinate")
@@ -64,16 +70,40 @@ class FileSearchApp:
 
     def select_folder(self):
         folder = filedialog.askdirectory()
+        print('folder selected:', folder)
         if folder:
             self.folder_path.set(folder)
 
+    def reset(self):
+        self.progress["value"] = 0
+        self.results_list.delete(0, tk.END)
+        self.filter_entry.delete(0, tk.END)
+
+    def by_modified_date(self):
+        sort_by = ['modified']
+        self.all_results.sort(key=lambda x: self.get_sort_key(x, sort_by), reverse=True)
+        self.display_results(self.all_results)
+
+    def by_publisher(self):
+        sort_by = ['publisher']
+        self.all_results.sort(key=lambda x: self.get_sort_key(x, sort_by), reverse=True)
+        self.display_results(self.all_results)
+
+    def by_published(self):
+        sort_by = ['published']
+        self.all_results.sort(key=lambda x: self.get_sort_key(x, sort_by), reverse=True)
+        self.display_results(self.all_results)
+
     def search_files(self):
+        self.reset()
+
         folder = Path(self.folder_path.get())
         if not folder.exists():
             return
 
         include_patterns, exclude_patterns = self.get_patterns(self.search_patterns.get())
         extensions = [ext.strip().lower() for ext in self.extensions.get().split(",")]
+        print('extensions:', extensions)
         sort_by = [s.strip().lower() for s in self.sort_by.get().split(",")]
         include_publishers, exclude_publishers = self.get_patterns(self.publisher_filters.get())
 
@@ -84,8 +114,9 @@ class FileSearchApp:
 
         results = []
         for idx, file in enumerate(files):
-            if not file.is_file() or file.suffix[1:].lower() not in extensions:
-                continue
+            if not extensions:
+                if not file.is_file() or file.suffix[1:].lower() not in extensions:
+                    continue
 
             filename = file.name.lower()
             if include_patterns and not any(p in filename for p in include_patterns):
@@ -138,6 +169,7 @@ class FileSearchApp:
         return tuple(key)
 
     def display_results(self, files):
+
         self.results_list.delete(0, tk.END)
         for file, year, publisher, _ in files:
             self.results_list.insert(tk.END, f"{file.name}")
