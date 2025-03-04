@@ -13,7 +13,7 @@ class FileSearchApp:
         self.root.title("File Search and Sort")
         self.root.geometry("1200x1000")
 
-        self.folder_path = tk.StringVar(value="c:/temp/")
+        self.folder_path = tk.StringVar(value="D:/ABogue/Books/")
         self.search_patterns = tk.StringVar(value="pytorch, python")
         self.extensions = tk.StringVar(value="pdf, txt")
         self.sort_by = tk.StringVar(value="published, publisher, modified")
@@ -64,6 +64,7 @@ class FileSearchApp:
 
     def select_folder(self):
         folder = filedialog.askdirectory()
+        print('folder selected:', folder)
         if folder:
             self.folder_path.set(folder)
 
@@ -74,6 +75,7 @@ class FileSearchApp:
 
         include_patterns, exclude_patterns = self.get_patterns(self.search_patterns.get())
         extensions = [ext.strip().lower() for ext in self.extensions.get().split(",")]
+        print('extensions:', extensions)
         sort_by = [s.strip().lower() for s in self.sort_by.get().split(",")]
         include_publishers, exclude_publishers = self.get_patterns(self.publisher_filters.get())
 
@@ -84,8 +86,9 @@ class FileSearchApp:
 
         results = []
         for idx, file in enumerate(files):
-            if not file.is_file() or file.suffix[1:].lower() not in extensions:
-                continue
+            if not extensions:
+                if not file.is_file() or file.suffix[1:].lower() not in extensions:
+                    continue
 
             filename = file.name.lower()
             if include_patterns and not any(p in filename for p in include_patterns):
