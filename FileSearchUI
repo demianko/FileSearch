@@ -38,13 +38,12 @@ class FileSearchApp:
         ttk.Label(frame, text="Limit:").grid(row=5, column=0, sticky=tk.W, padx=5)
         ttk.Entry(frame, textvariable=self.limit, width=10).grid(row=5, column=1, sticky=tk.W, padx=5)
 
-        #ttk.Button(frame, text="Search Files", command=self.search_files).grid(row=6, column=0, columnspan=2, pady=5)
+        # ttk.Button(frame, text="Search Files", command=self.search_files).grid(row=6, column=0, columnspan=2, pady=5)
         ttk.Button(frame, text="Search Files", command=self.search_files).grid(row=6, column=0, sticky=tk.W, pady=5)
 
-
-        #ttk.Button(frame, text="By Published", command=self.by_published).grid(row=7, column=0, sticky=tk.W, pady=10)
-        #ttk.Button(frame, text="By Publisher", command=self.by_publisher).grid(row=8, column=0, sticky=tk.W,pady=10)
-        #ttk.Button(frame, text="By Date", command=self.by_modified_date).grid(row=9, column=0, sticky=tk.W, pady=10)
+        # ttk.Button(frame, text="By Published", command=self.by_published).grid(row=7, column=0, sticky=tk.W, pady=10)
+        # ttk.Button(frame, text="By Publisher", command=self.by_publisher).grid(row=8, column=0, sticky=tk.W, pady=10)
+        # ttk.Button(frame, text="By Date", command=self.by_modified_date).grid(row=9, column=0, sticky=tk.W, pady=10)
 
         # Progress bar
         self.progress = ttk.Progressbar(self.root, orient="horizontal", length=480, mode="determinate")
@@ -114,7 +113,7 @@ class FileSearchApp:
 
         results = []
         for idx, file in enumerate(files):
-            if not extensions:
+            if extensions:  # Check if extensions list is not empty
                 if not file.is_file() or file.suffix[1:].lower() not in extensions:
                     continue
 
@@ -137,7 +136,6 @@ class FileSearchApp:
             time.sleep(0.01)  # Simulate processing delay
 
         results.sort(key=lambda x: self.get_sort_key(x, sort_by), reverse=True)
-
 
         self.all_results = results[:self.limit.get()]
         self.display_results(self.all_results)
@@ -169,7 +167,6 @@ class FileSearchApp:
         return tuple(key)
 
     def display_results(self, files):
-
         self.results_list.delete(0, tk.END)
         for file, year, publisher, _ in files:
             self.results_list.insert(tk.END, f"{file.name}")
@@ -192,3 +189,4 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = FileSearchApp(root)
     root.mainloop()
+
