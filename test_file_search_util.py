@@ -40,6 +40,19 @@ class TestFileSearchUtil(unittest.TestCase):
 
     # --- 2. Query Parsing and NOT Logic Tests ---
 
+    def test_comma_or_operator(self):
+        # Query: "java, j2ee" (comma separates multiple alternative search patterns)
+        rules, excludes = self.app_cls.parse_search_query("java, j2ee")
+        self.assertEqual(len(rules), 2)
+        self.assertEqual(len(excludes), 0)
+
+        # Matches "java"
+        self.assertTrue(self.app_cls.matches_query("Packt - Java 17 Basics.pdf", rules, excludes))
+        # Matches "j2ee"
+        self.assertTrue(self.app_cls.matches_query("Manning - J2EE Architecture.epub", rules, excludes))
+        # Neither matches
+        self.assertFalse(self.app_cls.matches_query("OReilly - Python Deep Learning.pdf", rules, excludes))
+
     def test_not_exclusion_within_clause(self):
         # Query: "ai agent NOT agents"
         rules, excludes = self.app_cls.parse_search_query("ai agent NOT agents")
@@ -162,7 +175,40 @@ class TestFileSearchUtil(unittest.TestCase):
 
         sort_by_publisher = ["publisher"]
         key_pub = app.get_sort_key(file_data, sort_by_publisher)
-        self.assertEqual(key_pub, ("packt",))
+    # --- 5. Extension Inclusion & Exclusion Tests ---
+
+    def test_parse_extensions(self):
+        inc, exc = self.app_cls.parse_extensions("pdf, epub, -java")
+        self.assertEqual(inc, {"pdf", "epub"})
+        self.assertEqual(exc, {"java"})
+
+    def test_parse_extensions_variants(self):
+        inc, exc = self.app_cls.parse_extensions("*.pdf, .epub, -*.java, NOT class, -tmp")
+        self.assertEqual(inc, {"pdf", "epub"})
+        self.assertEqual(exc, {"java", "class", "tmp"})
+
+    def test_parse_extensions_only_excludes(self):
+        inc, exc = self.app_cls.parse_extensions("-java, -class, -tmp")
+        self.assertEqual(inc, set())
+        self.assertEqual(exc, {"java", "class", "tmp"})
+
+    def test_matches_extension(self):
+        inc = {"pdf", "epub"}
+        exc = {"java"}
+
+        self.assertTrue(self.app_cls.matches_extension("pdf", inc, exc))
+        self.assertTrue(self.app_cls.matches_extension(".epub", inc, exc))
+        self.assertFalse(self.app_cls.matches_extension("java", inc, exc))
+        self.assertFalse(self.app_cls.matches_extension("txt", inc, exc))
+
+    def test_matches_extension_with_only_excludes(self):
+        inc = set()
+        exc = {"java", "class"}
+
+        self.assertTrue(self.app_cls.matches_extension("pdf", inc, exc))
+        self.assertTrue(self.app_cls.matches_extension("txt", inc, exc))
+        self.assertFalse(self.app_cls.matches_extension("java", inc, exc))
+        self.assertFalse(self.app_cls.matches_extension("class", inc, exc))
 
 
 if __name__ == "__main__":

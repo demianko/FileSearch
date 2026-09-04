@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 import webbrowser
 
 import customtkinter as ctk
@@ -152,13 +152,13 @@ class FileSearchApp(ctk.CTk):
         self.entry_patterns.bind("<KP_Enter>", self.search_files)
 
         lbl_ext = ctk.CTkLabel(
-            top_card, text="📄 Extensions:", font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold")
+            top_card, text="📄 Extensions (+/-):", font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold")
         )
         lbl_ext.grid(row=1, column=2, padx=(8, 8), pady=4, sticky="w")
 
         self.entry_extensions = ctk.CTkEntry(
             top_card, textvariable=self.extensions, height=34,
-            placeholder_text="e.g. pdf, epub, txt"
+            placeholder_text="e.g. pdf, epub, txt, -java"
         )
         self.entry_extensions.grid(row=1, column=3, columnspan=2, padx=(0, 16), pady=4, sticky="ew")
         self.entry_extensions.bind("<Return>", self.search_files)
@@ -535,6 +535,59 @@ class FileSearchApp(ctk.CTk):
 
         return rules, global_excludes
 
+    @classmethod
+    def parse_extensions(cls, exts_str: str) -> Tuple[Set[str], Set[str]]:
+        """
+        Parses comma-separated extension filter string into include and exclude sets.
+        Supports:
+          - Include: 'pdf', '.epub', '*.txt'
+          - Exclude: '-java', '-.class', '-*.tmp', 'NOT java', 'not log'
+        Returns:
+          (include_exts, exclude_exts) as sets of lowercase extension strings without leading dot.
+        """
+        include_exts: Set[str] = set()
+        exclude_exts: Set[str] = set()
+
+        if not exts_str or not exts_str.strip():
+            return include_exts, exclude_exts
+
+        raw_items = [item.strip() for item in exts_str.split(",") if item.strip()]
+        for item in raw_items:
+            is_exclude = False
+            clean = item
+            if clean.startswith("-"):
+                is_exclude = True
+                clean = clean[1:].strip()
+            elif re.match(r'^NOT\s+', clean, re.IGNORECASE):
+                is_exclude = True
+                clean = re.sub(r'^NOT\s+', '', clean, flags=re.IGNORECASE).strip()
+
+            clean = clean.lstrip("*").lstrip(".").strip().lower()
+            if not clean:
+                continue
+
+            if is_exclude:
+                exclude_exts.add(clean)
+            else:
+                include_exts.add(clean)
+
+        return include_exts, exclude_exts
+
+    @staticmethod
+    def matches_extension(file_ext: str, include_exts: Set[str], exclude_exts: Set[str]) -> bool:
+        """
+        Determines if file_ext (without leading dot, lowercase) satisfies extension filtering rules.
+        - If file_ext is in exclude_exts -> False
+        - If include_exts is empty -> True (matches all non-excluded)
+        - If include_exts is not empty -> True only if file_ext in include_exts
+        """
+        norm_ext = file_ext.lstrip(".").lower()
+        if exclude_exts and norm_ext in exclude_exts:
+            return False
+        if include_exts:
+            return norm_ext in include_exts
+        return True
+
     @staticmethod
     def matches_query(text: str, rules: List[SearchRule], global_excludes: List[re.Pattern]) -> bool:
         """Evaluates whether text satisfies the parsed rules and global exclusions."""
@@ -579,9 +632,8 @@ class FileSearchApp(ctk.CTk):
         try:
             pattern_rules, pattern_excludes = self.parse_search_query(self.search_patterns.get())
             pub_rules, pub_excludes = self.parse_search_query(self.publisher_filters.get())
+            include_exts, exclude_exts = self.parse_extensions(self.extensions.get())
 
-            raw_exts = self.extensions.get()
-            extensions = [ext.strip().lower().lstrip(".") for ext in raw_exts.split(",") if ext.strip()]
             sort_by = [s.strip().lower() for s in self.sort_by.get().split(",") if s.strip()]
             limit_val = self.limit.get()
 
@@ -601,10 +653,9 @@ class FileSearchApp(ctk.CTk):
                 if not file.is_file():
                     continue
 
-                if extensions:
-                    file_ext = file.suffix.lstrip(".").lower()
-                    if file_ext not in extensions:
-                        continue
+                file_ext = file.suffix.lstrip(".").lower()
+                if not self.matches_extension(file_ext, include_exts, exclude_exts):
+                    continue
 
                 filename = file.name
                 if not self.matches_query(filename, pattern_rules, pattern_excludes):
