@@ -1,5 +1,7 @@
 # FileSearch Pro (FileSearchUtil)
 
+<img width="1175" height="824" alt="image" src="https://github.com/user-attachments/assets/cc627953-0851-4349-8430-9527a8fef8b8" />
+
 A modern, fast, and responsive Desktop File Search & Sort utility built with **CustomTkinter** and **Python 3.13**.
 
 ---
