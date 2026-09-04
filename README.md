@@ -14,6 +14,9 @@ A modern, fast, and responsive Desktop File Search & Sort utility built with **C
   - `NOT` (Exclusion Operator): Exclude single or multiple keywords (e.g. `ai * pattern NOT apress and addison`, `ai agent NOT agents`, or `ai * pattern NOT apress NOT addison`).
   - `*` : Matches zero or more characters (e.g. `java * pattern` matches `Java 17 Design Patterns`).
   - `?` : Matches any single character (e.g. `python?` matches `python3`).
+- 📄 **Extension Inclusion & Exclusion**:
+  - Target specific extensions: `pdf, epub, txt`
+  - Exclude unwanted extensions using `-` or `NOT`: `pdf, epub, -java` (matches PDF and EPUB files while excluding `.java` files), or `-tmp, -log` (matches all extensions except `.tmp` and `.log`).
 - 🛑 **Instant Search Control**:
   - Press <kbd>Enter</kbd> in the search pattern field to instantly clear previous results and run a fresh search.
   - Press <kbd>Esc</kbd> anywhere in the window to halt an active search in real time.
