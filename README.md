@@ -26,6 +26,7 @@ A modern, fast, and responsive Desktop File Search & Sort utility built with **C
 - 🖱️ **Windows Integration**:
   - Double-click any row to open the file in its default system viewer.
   - Right-click context menu: **Open File**, **Open Containing Folder in Explorer** (with file selected), **Copy Full Path**, **Copy File Name**.
+- 💾 **Persistent User Configuration**: Automatically saves the user's last-used folder, search patterns, extensions, sort order, publisher filters, limit, and live filter query in `~/.filesearch/config` and reloads them on application launch.
 - 🎨 **Modern 2026 Dark UI**: Sleek aesthetic with rounded cards, Segoe UI typography, and responsive controls.
 
 ---
@@ -68,15 +69,48 @@ python FileSearchUtil.py
 
 ## 3. Running Unit Tests
 
-Run the test suite to verify search logic, boolean expressions, pattern compilation, and metadata extraction:
+Run all unit tests automatically with test discovery:
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest test_file_search_util.py
+python -m unittest
+```
+
+Or run individual test modules:
+
+```powershell
+python -m unittest test_app_config.py
+python -m unittest test_search_rule.py
+python -m unittest test_query_parser.py
+python -m unittest test_query_matcher.py
+python -m unittest test_extension_filter.py
+python -m unittest test_file_item.py
+python -m unittest test_metadata_extractor.py
+python -m unittest test_file_search_engine.py
+python -m unittest test_file_search_app.py
 ```
 
 ---
 
-## 4. Building a Standalone `.exe` File
+## 4. Project Architecture
+
+The codebase follows the **Single Responsibility Principle (SRP)** with modular OOP classes:
+
+| Source File | Test File | Responsibility |
+| :--- | :--- | :--- |
+| [`app_config.py`](file:///d:/AProjects/non.work/file.search/app_config.py) | [`test_app_config.py`](file:///d:/AProjects/non.work/file.search/test_app_config.py) | User configuration model & persistence in `~/.filesearch/config` |
+| [`search_rule.py`](file:///d:/AProjects/non.work/file.search/search_rule.py) | [`test_search_rule.py`](file:///d:/AProjects/non.work/file.search/test_search_rule.py) | Include/exclude regex rule evaluation |
+| [`query_parser.py`](file:///d:/AProjects/non.work/file.search/query_parser.py) | [`test_query_parser.py`](file:///d:/AProjects/non.work/file.search/test_query_parser.py) | Parsing syntax (`*`, `?`, `\|`, `NOT`, `AND`, `,`) |
+| [`query_matcher.py`](file:///d:/AProjects/non.work/file.search/query_matcher.py) | [`test_query_matcher.py`](file:///d:/AProjects/non.work/file.search/test_query_matcher.py) | Query rule & exclusion matching against text |
+| [`extension_filter.py`](file:///d:/AProjects/non.work/file.search/extension_filter.py) | [`test_extension_filter.py`](file:///d:/AProjects/non.work/file.search/test_extension_filter.py) | Extension parsing & filtering (`+` / `-` / `NOT`) |
+| [`file_item.py`](file:///d:/AProjects/non.work/file.search/file_item.py) | [`test_file_item.py`](file:///d:/AProjects/non.work/file.search/test_file_item.py) | Discovered file domain data model |
+| [`metadata_extractor.py`](file:///d:/AProjects/non.work/file.search/metadata_extractor.py) | [`test_metadata_extractor.py`](file:///d:/AProjects/non.work/file.search/test_metadata_extractor.py) | Extraction of publication year & publisher |
+| [`file_search_engine.py`](file:///d:/AProjects/non.work/file.search/file_search_engine.py) | [`test_file_search_engine.py`](file:///d:/AProjects/non.work/file.search/test_file_search_engine.py) | Directory scanning (new-to-old) & search engine |
+| [`file_search_app.py`](file:///d:/AProjects/non.work/file.search/file_search_app.py) | [`test_file_search_app.py`](file:///d:/AProjects/non.work/file.search/test_file_search_app.py) | CustomTkinter GUI presentation layer |
+| [`FileSearchUtil.py`](file:///d:/AProjects/non.work/file.search/FileSearchUtil.py) | [`test_file_search_util.py`](file:///d:/AProjects/non.work/file.search/test_file_search_util.py) | Application entrypoint & master test suite |
+
+---
+
+## 5. Building a Standalone `.exe` File
 
 You can build a standalone Windows executable (`.exe`) that runs on any Windows machine **without requiring Python to be installed**.
 

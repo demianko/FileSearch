@@ -1,0 +1,631 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+from typing import Dict, List, Optional
+import webbrowser
+
+import customtkinter as ctk
+
+from app_config import AppConfig, ConfigManager
+from extension_filter import ExtensionFilter
+from file_item import FileItem
+from file_search_engine import FileSearchEngine
+from metadata_extractor import MetadataExtractor
+from query_matcher import QueryMatcher
+from query_parser import QueryParser
+from search_rule import SearchRule
+
+
+# Configure CustomTkinter Appearance
+ctk.set_appearance_mode("Dark")
+ctk.set_default_color_theme("blue")
+
+
+class FileSearchApp(ctk.CTk):
+    """Modern 2026 Desktop File Search & Sort Application Presentation Layer."""
+
+    # Backward-compatibility delegates to domain services
+    term_to_regex = staticmethod(QueryParser.term_to_regex)
+    parse_exclude_terms = classmethod(lambda cls, s: QueryParser.parse_exclude_terms(s))
+    parse_search_query = classmethod(lambda cls, s: QueryParser.parse(s))
+    parse_extensions = classmethod(
+        lambda cls, s: (ExtensionFilter.from_string(s).include_exts, ExtensionFilter.from_string(s).exclude_exts)
+    )
+    matches_extension = staticmethod(lambda ext, inc, exc: ExtensionFilter(inc, exc).matches(ext))
+    collect_files_sorted_by_mtime = staticmethod(FileSearchEngine.collect_files_sorted_by_mtime)
+    matches_query = staticmethod(QueryMatcher.matches)
+    extract_year = staticmethod(MetadataExtractor.extract_year)
+    extract_publisher = staticmethod(MetadataExtractor.extract_publisher)
+
+    def __init__(
+        self,
+        search_engine: Optional[FileSearchEngine] = None,
+        config_manager: Optional[ConfigManager] = None,
+    ):
+        super().__init__()
+
+        self.search_engine = search_engine or FileSearchEngine()
+        self.config_manager = config_manager or ConfigManager()
+
+        # Load persisted config from ~/.filesearch/config
+        config = self.config_manager.load()
+
+        self.title("FileSearch Pro — Fast Search & Sort")
+        self.geometry("1200x840")
+        self.minsize(980, 640)
+
+        # Reactive State Variables loaded from config
+        self.folder_path = tk.StringVar(value=config.directory)
+        self.search_patterns = tk.StringVar(value=config.pattern)
+        self.extensions = tk.StringVar(value=config.extension)
+        self.sort_by = tk.StringVar(value=config.sort_order)
+        self.publisher_filters = tk.StringVar(value=config.publisher)
+        self.limit = tk.IntVar(value=config.limit)
+        self.filter_var = tk.StringVar(value=config.filter_result)
+
+        # Data Storage
+        self.all_results: List[FileItem] = []
+        self.displayed_results: List[FileItem] = []
+        self.results_map: Dict[str, FileItem] = {}
+        self.sort_column = ""
+        self.sort_reverse = False
+        self.is_searching = False
+        self.cancel_search = False
+
+        self._create_widgets()
+        self._setup_context_menu()
+
+        # Handle window closing to save configuration
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def save_current_config(self):
+        """Persists the current user inputs into ~/.filesearch/config."""
+        config = AppConfig(
+            directory=self.folder_path.get(),
+            pattern=self.search_patterns.get(),
+            extension=self.extensions.get(),
+            sort_order=self.sort_by.get(),
+            publisher=self.publisher_filters.get(),
+            limit=self.limit.get(),
+            filter_result=self.filter_var.get(),
+        )
+        self.config_manager.save(config)
+
+    def _on_close(self):
+        """Window close handler: persists user configuration and destroys window."""
+        self.save_current_config()
+        self.destroy()
+
+    def _create_widgets(self):
+        # Configure root grid
+        self.grid_rowconfigure(2, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+
+        # 1. Top Card: Folder Selection & Search Inputs
+        self._build_controls_card()
+
+        # 2. Progress & Live Filter Bar
+        self._build_progress_and_filter_card()
+
+        # 3. Center Card: Modern Results Table
+        self._build_results_card()
+
+        # 4. Bottom Footer: Status Bar
+        self._build_footer_status()
+
+    def _build_controls_card(self):
+        top_card = ctk.CTkFrame(self, corner_radius=12, border_width=1, border_color="#333333")
+        top_card.grid(row=0, column=0, padx=16, pady=(16, 8), sticky="ew")
+        top_card.grid_columnconfigure(1, weight=1)
+        top_card.grid_columnconfigure(3, weight=1)
+
+        # Row 0: Target Folder Picker
+        lbl_folder = ctk.CTkLabel(
+            top_card, text="📁 Directory:", font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold")
+        )
+        lbl_folder.grid(row=0, column=0, padx=(16, 8), pady=(12, 6), sticky="w")
+
+        self.entry_folder = ctk.CTkEntry(
+            top_card, textvariable=self.folder_path, height=34,
+            placeholder_text="Enter folder path or click Browse..."
+        )
+        self.entry_folder.grid(row=0, column=1, columnspan=3, padx=(0, 8), pady=(12, 6), sticky="ew")
+        self.entry_folder.bind("<Return>", self.search_files)
+        self.entry_folder.bind("<KP_Enter>", self.search_files)
+
+        btn_browse = ctk.CTkButton(
+            top_card, text="Browse...", width=100, height=34,
+            fg_color="#2b2b2b", hover_color="#3a3a3a", border_width=1, border_color="#444444",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            command=self.select_folder
+        )
+        btn_browse.grid(row=0, column=4, padx=(0, 16), pady=(12, 6), sticky="e")
+
+        # Row 1: Search Patterns & File Extensions
+        lbl_pattern = ctk.CTkLabel(
+            top_card, text="🔍 Patterns (*, ?, |, NOT):", font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold")
+        )
+        lbl_pattern.grid(row=1, column=0, padx=(16, 8), pady=4, sticky="w")
+
+        self.entry_patterns = ctk.CTkEntry(
+            top_card, textvariable=self.search_patterns, height=34,
+            placeholder_text="e.g. ai agent NOT agents, java * pattern, python|rust"
+        )
+        self.entry_patterns.grid(row=1, column=1, padx=(0, 12), pady=4, sticky="ew")
+        self.entry_patterns.bind("<Return>", self.search_files)
+        self.entry_patterns.bind("<KP_Enter>", self.search_files)
+
+        lbl_ext = ctk.CTkLabel(
+            top_card, text="📄 Extensions (+/-):", font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold")
+        )
+        lbl_ext.grid(row=1, column=2, padx=(8, 8), pady=4, sticky="w")
+
+        self.entry_extensions = ctk.CTkEntry(
+            top_card, textvariable=self.extensions, height=34,
+            placeholder_text="e.g. pdf, epub, txt, -java"
+        )
+        self.entry_extensions.grid(row=1, column=3, columnspan=2, padx=(0, 16), pady=4, sticky="ew")
+        self.entry_extensions.bind("<Return>", self.search_files)
+        self.entry_extensions.bind("<KP_Enter>", self.search_files)
+
+        # Row 2: Sort By, Publisher Filters, Limit
+        lbl_sort = ctk.CTkLabel(
+            top_card, text="⚡ Sort Order:", font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold")
+        )
+        lbl_sort.grid(row=2, column=0, padx=(16, 8), pady=4, sticky="w")
+
+        self.entry_sort = ctk.CTkEntry(
+            top_card, textvariable=self.sort_by, height=34,
+            placeholder_text="e.g. published, publisher, modified"
+        )
+        self.entry_sort.grid(row=2, column=1, padx=(0, 12), pady=4, sticky="ew")
+        self.entry_sort.bind("<Return>", self.search_files)
+        self.entry_sort.bind("<KP_Enter>", self.search_files)
+
+        lbl_pub = ctk.CTkLabel(
+            top_card, text="🏢 Publishers:", font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold")
+        )
+        lbl_pub.grid(row=2, column=2, padx=(8, 8), pady=4, sticky="w")
+
+        self.entry_publisher = ctk.CTkEntry(
+            top_card, textvariable=self.publisher_filters, height=34,
+            placeholder_text="e.g. packt, o'reilly, -manning"
+        )
+        self.entry_publisher.grid(row=2, column=3, columnspan=2, padx=(0, 16), pady=4, sticky="ew")
+        self.entry_publisher.bind("<Return>", self.search_files)
+        self.entry_publisher.bind("<KP_Enter>", self.search_files)
+
+        # Row 3: Action Buttons & Limit
+        actions_frame = ctk.CTkFrame(top_card, fg_color="transparent")
+        actions_frame.grid(row=3, column=0, columnspan=5, padx=16, pady=(10, 14), sticky="ew")
+        actions_frame.grid_columnconfigure(5, weight=1)
+
+        # Limit
+        lbl_limit = ctk.CTkLabel(actions_frame, text="Limit:", font=ctk.CTkFont(family="Segoe UI", size=12))
+        lbl_limit.grid(row=0, column=0, padx=(0, 6), pady=2, sticky="w")
+
+        self.entry_limit = ctk.CTkEntry(actions_frame, textvariable=self.limit, width=75, height=32)
+        self.entry_limit.grid(row=0, column=1, padx=(0, 16), pady=2, sticky="w")
+        self.entry_limit.bind("<Return>", self.search_files)
+        self.entry_limit.bind("<KP_Enter>", self.search_files)
+
+        # Action Buttons
+        self.btn_search = ctk.CTkButton(
+            actions_frame, text="⚡ Search Files (Enter)", width=170, height=34,
+            fg_color="#1f6aa5", hover_color="#144870",
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            command=self.search_files
+        )
+        self.btn_search.grid(row=0, column=2, padx=(0, 8), pady=2, sticky="w")
+
+        btn_sort_pub = ctk.CTkButton(
+            actions_frame, text="📅 By Published", width=125, height=34,
+            fg_color="#2b2b2b", hover_color="#3a3a3a", border_width=1, border_color="#444444",
+            command=self.by_published
+        )
+        btn_sort_pub.grid(row=0, column=3, padx=(0, 6), pady=2, sticky="w")
+
+        btn_sort_publisher = ctk.CTkButton(
+            actions_frame, text="🏢 By Publisher", width=125, height=34,
+            fg_color="#2b2b2b", hover_color="#3a3a3a", border_width=1, border_color="#444444",
+            command=self.by_publisher
+        )
+        btn_sort_publisher.grid(row=0, column=4, padx=(0, 6), pady=2, sticky="w")
+
+        btn_sort_date = ctk.CTkButton(
+            actions_frame, text="⏱️ By Date", width=105, height=34,
+            fg_color="#2b2b2b", hover_color="#3a3a3a", border_width=1, border_color="#444444",
+            command=self.by_modified_date
+        )
+        btn_sort_date.grid(row=0, column=5, padx=(0, 6), pady=2, sticky="w")
+
+        btn_reset = ctk.CTkButton(
+            actions_frame, text="🔄 Reset", width=80, height=34,
+            fg_color="#3a3a3a", hover_color="#4a4a4a",
+            command=self.reset
+        )
+        btn_reset.grid(row=0, column=6, padx=(0, 0), pady=2, sticky="e")
+
+        # Global Key Bindings
+        self.bind("<Return>", self.search_files)
+        self.bind("<KP_Enter>", self.search_files)
+        self.bind("<Escape>", self.stop_search)
+
+    def _build_progress_and_filter_card(self):
+        mid_card = ctk.CTkFrame(self, corner_radius=10, fg_color="transparent")
+        mid_card.grid(row=1, column=0, padx=16, pady=(0, 6), sticky="ew")
+        mid_card.grid_columnconfigure(1, weight=1)
+
+        # Progress bar
+        self.progress = ctk.CTkProgressBar(mid_card, height=12, corner_radius=6, progress_color="#1f6aa5")
+        self.progress.grid(row=0, column=0, columnspan=2, padx=0, pady=(0, 8), sticky="ew")
+        self.progress.set(0)
+
+        # Live Filter Bar
+        lbl_filter = ctk.CTkLabel(
+            mid_card, text="🎯 Filter Results:",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold")
+        )
+        lbl_filter.grid(row=1, column=0, padx=(0, 8), pady=0, sticky="w")
+
+        self.filter_entry = ctk.CTkEntry(
+            mid_card, textvariable=self.filter_var, height=32,
+            placeholder_text="Type to filter displayed items instantly (supports '|', 'NOT', '*', '?')..."
+        )
+        self.filter_entry.grid(row=1, column=1, padx=(0, 0), pady=0, sticky="ew")
+        self.filter_entry.bind("<KeyRelease>", self.filter_results)
+
+    def _build_results_card(self):
+        results_frame = ctk.CTkFrame(self, corner_radius=12, border_width=1, border_color="#333333")
+        results_frame.grid(row=2, column=0, padx=16, pady=(0, 8), sticky="nsew")
+        results_frame.grid_rowconfigure(0, weight=1)
+        results_frame.grid_columnconfigure(0, weight=1)
+
+        # Modern Treeview Styling
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure(
+            "Modern.Treeview",
+            background="#1e1e1e",
+            foreground="#e0e0e0",
+            fieldbackground="#1e1e1e",
+            rowheight=30,
+            font=("Segoe UI", 10),
+            borderwidth=0
+        )
+        style.configure(
+            "Modern.Treeview.Heading",
+            background="#2a2a2a",
+            foreground="#ffffff",
+            font=("Segoe UI", 10, "bold"),
+            relief="flat",
+            padding=6
+        )
+        style.map("Modern.Treeview", background=[("selected", "#1f6aa5")], foreground=[("selected", "#ffffff")])
+        style.map("Modern.Treeview.Heading", background=[("active", "#383838")])
+
+        cols = ("name", "publisher", "year", "date", "path")
+        self.tree = ttk.Treeview(
+            results_frame, columns=cols, show="headings",
+            style="Modern.Treeview", selectmode="extended"
+        )
+
+        self.tree.heading("name", text="File Name", command=lambda: self._sort_tree("name"))
+        self.tree.heading("publisher", text="Publisher", command=lambda: self._sort_tree("publisher"))
+        self.tree.heading("year", text="Year", command=lambda: self._sort_tree("year"))
+        self.tree.heading("date", text="Date Modified", command=lambda: self._sort_tree("date"))
+        self.tree.heading("path", text="Directory Path", command=lambda: self._sort_tree("path"))
+
+        self.tree.column("name", width=750, minwidth=300)
+        self.tree.column("publisher", width=110, minwidth=80, anchor="center")
+        self.tree.column("year", width=65, minwidth=50, anchor="center")
+        self.tree.column("date", width=125, minwidth=100, anchor="center")
+        self.tree.column("path", width=100, minwidth=80)
+
+        # Scrollbars
+        vsb = ttk.Scrollbar(results_frame, orient="vertical", command=self.tree.yview)
+        hsb = ttk.Scrollbar(results_frame, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        self.tree.grid(row=0, column=0, sticky="nsew", padx=(6, 0), pady=6)
+        vsb.grid(row=0, column=1, sticky="ns", padx=(0, 6), pady=6)
+        hsb.grid(row=1, column=0, sticky="ew", padx=(6, 0), pady=(0, 6))
+
+        # Bindings
+        self.tree.bind("<Double-1>", self.open_file)
+        self.tree.bind("<Configure>", self._on_tree_resize)
+
+    def _on_tree_resize(self, event):
+        total_w = event.width - 20
+        if total_w > 300:
+            name_w = int(total_w * 0.65)
+            rem_w = total_w - name_w
+            pub_w = max(70, int(rem_w * 0.28))
+            year_w = max(50, int(rem_w * 0.16))
+            date_w = max(90, int(rem_w * 0.28))
+            path_w = max(60, rem_w - pub_w - year_w - date_w)
+
+            self.tree.column("name", width=name_w)
+            self.tree.column("publisher", width=pub_w)
+            self.tree.column("year", width=year_w)
+            self.tree.column("date", width=date_w)
+            self.tree.column("path", width=path_w)
+
+    def _build_footer_status(self):
+        footer_frame = ctk.CTkFrame(self, height=32, corner_radius=0, fg_color="transparent")
+        footer_frame.grid(row=3, column=0, padx=16, pady=(0, 10), sticky="ew")
+        footer_frame.grid_columnconfigure(0, weight=1)
+
+        self.lbl_status = ctk.CTkLabel(
+            footer_frame, text="Ready", text_color="#999999",
+            font=ctk.CTkFont(family="Segoe UI", size=12), anchor="w"
+        )
+        self.lbl_status.grid(row=0, column=0, sticky="w")
+
+        self.lbl_count = ctk.CTkLabel(
+            footer_frame, text="0 files found", text_color="#1f6aa5",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"), anchor="e"
+        )
+        self.lbl_count.grid(row=0, column=1, sticky="e")
+
+    def _setup_context_menu(self):
+        self.context_menu = tk.Menu(self, tearoff=0, bg="#2b2b2b", fg="#ffffff", activebackground="#1f6aa5")
+        self.context_menu.add_command(label="Open File", command=self.open_file)
+        self.context_menu.add_command(label="Open Containing Folder in Explorer", command=self._ctx_open_explorer)
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label="Copy Full Path", command=self._ctx_copy_path)
+        self.context_menu.add_command(label="Copy File Name", command=self._ctx_copy_name)
+
+        self.tree.bind("<Button-3>", self._show_context_menu)
+
+    def _show_context_menu(self, event):
+        row_id = self.tree.identify_row(event.y)
+        if row_id:
+            if row_id not in self.tree.selection():
+                self.tree.selection_set(row_id)
+            self.context_menu.post(event.x_root, event.y_root)
+
+    def select_folder(self):
+        folder = filedialog.askdirectory(initialdir=self.folder_path.get())
+        if folder:
+            self.folder_path.set(folder)
+            self.save_current_config()
+
+    def reset(self):
+        self.progress.set(0)
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        self.filter_var.set("")
+        self.all_results = []
+        self.displayed_results = []
+        self.results_map = {}
+        self.lbl_status.configure(text="Ready")
+        self.lbl_count.configure(text="0 files found")
+        self.update_idletasks()
+
+    def get_sort_key(self, file_data, sort_by):
+        """Helper to generate sort keys, supporting both FileItem and legacy tuples."""
+        if isinstance(file_data, FileItem):
+            return file_data.get_sort_key(sort_by)
+        # Legacy tuple: (file, year, publisher, modified)
+        file, year, publisher, modified = file_data
+        key = []
+        for criteria in sort_by:
+            if criteria == "published":
+                key.append(year)
+            elif criteria == "publisher":
+                key.append(publisher)
+            elif criteria == "modified":
+                key.append(modified)
+        return tuple(key)
+
+    def by_modified_date(self):
+        self.all_results = self.search_engine.sort_results(self.all_results, ['modified'], reverse=True)
+        self.display_results(self.all_results)
+
+    def by_publisher(self):
+        self.all_results = self.search_engine.sort_results(self.all_results, ['publisher'], reverse=True)
+        self.display_results(self.all_results)
+
+    def by_published(self):
+        self.all_results = self.search_engine.sort_results(self.all_results, ['published'], reverse=True)
+        self.display_results(self.all_results)
+
+    def stop_search(self, event=None):
+        """Immediately halts an in-progress file search when Escape is pressed."""
+        if self.is_searching:
+            self.cancel_search = True
+            self.lbl_status.configure(text="Stopping search... (Esc pressed)")
+            self.update_idletasks()
+
+    def search_files(self, event=None):
+        if self.is_searching:
+            return
+
+        # Save config when searching
+        self.save_current_config()
+
+        self.reset()
+        self.update()
+
+        self.is_searching = True
+        self.cancel_search = False
+        self.btn_search.configure(
+            text="⏹️ Stop Search (Esc)", fg_color="#c0392b", hover_color="#962d22", command=self.stop_search
+        )
+
+        folder = Path(self.folder_path.get().strip())
+        if not folder.exists():
+            self.is_searching = False
+            self.btn_search.configure(
+                text="⚡ Search Files (Enter)", fg_color="#1f6aa5", hover_color="#144870", command=self.search_files
+            )
+            messagebox.showwarning("Folder Not Found", f"The directory does not exist:\n{folder}")
+            return
+
+        try:
+            self.lbl_status.configure(text=f"Scanning directory: {folder.name}...")
+            self.update_idletasks()
+            start_time = time.time()
+
+            def on_match(scanned_count: int, total_count: int, item: FileItem):
+                self.all_results.append(item)
+                self.displayed_results.append(item)
+
+                item_id = str(len(self.all_results))
+                self.results_map[item_id] = item
+                self.tree.insert(
+                    "", "end", iid=item_id,
+                    values=(item.name, item.publisher_display, item.year_display, item.date_modified_str, item.parent_str)
+                )
+
+                progress_ratio = scanned_count / total_count if total_count > 0 else 1.0
+                self.progress.set(progress_ratio)
+                self.lbl_count.configure(text=f"{len(self.all_results)} files found")
+                self.lbl_status.configure(text=f"Scanned {scanned_count:,} of {total_count:,} files... (Esc to stop)")
+
+                if scanned_count % 10 == 0:
+                    self.update_idletasks()
+
+            self.all_results = self.search_engine.search(
+                folder=folder,
+                pattern_query=self.search_patterns.get(),
+                publisher_query=self.publisher_filters.get(),
+                extensions_query=self.extensions.get(),
+                limit=self.limit.get(),
+                cancel_check=lambda: self.cancel_search,
+                progress_callback=on_match,
+            )
+
+            elapsed = time.time() - start_time
+            sort_by = [s.strip().lower() for s in self.sort_by.get().split(",") if s.strip()]
+
+            if sort_by and self.all_results:
+                self.all_results = self.search_engine.sort_results(self.all_results, sort_by, reverse=True)
+                self.display_results(self.all_results)
+
+            if self.cancel_search:
+                self.lbl_status.configure(
+                    text=f"Search stopped (Esc) in {elapsed:.2f}s. Found {len(self.all_results):,} matching files."
+                )
+            else:
+                self.progress.set(1.0)
+                self.lbl_status.configure(
+                    text=f"Completed in {elapsed:.2f}s (Found {len(self.all_results):,} files in '{folder.name}')"
+                )
+            self.lbl_count.configure(text=f"{len(self.all_results):,} files found")
+
+        finally:
+            self.is_searching = False
+            self.cancel_search = False
+            self.btn_search.configure(
+                text="⚡ Search Files (Enter)", fg_color="#1f6aa5", hover_color="#144870", command=self.search_files
+            )
+
+    def display_results(self, files: List[FileItem]):
+        self.displayed_results = list(files)
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        self.results_map.clear()
+
+        for idx, item in enumerate(files, start=1):
+            item_id = str(idx)
+            self.results_map[item_id] = item
+            self.tree.insert(
+                "", "end", iid=item_id,
+                values=(item.name, item.publisher_display, item.year_display, item.date_modified_str, item.parent_str)
+            )
+        self.lbl_count.configure(text=f"{len(files):,} files found")
+
+    def filter_results(self, event=None):
+        self.save_current_config()
+        query = self.filter_var.get().strip()
+        if not query:
+            self.display_results(self.all_results)
+            return
+
+        filter_rules, filter_excludes = QueryParser.parse(query)
+        filtered_files = [
+            item for item in self.all_results
+            if QueryMatcher.matches(item.name, filter_rules, filter_excludes)
+        ]
+        self.display_results(filtered_files)
+
+    def _sort_tree(self, col: str):
+        if self.sort_column == col:
+            self.sort_reverse = not self.sort_reverse
+        else:
+            self.sort_column = col
+            self.sort_reverse = False
+
+        if col == "name":
+            self.displayed_results.sort(key=lambda x: x.name.lower(), reverse=self.sort_reverse)
+        elif col == "publisher":
+            self.displayed_results.sort(key=lambda x: x.publisher.lower(), reverse=self.sort_reverse)
+        elif col == "year":
+            self.displayed_results.sort(key=lambda x: x.year, reverse=self.sort_reverse)
+        elif col == "date":
+            self.displayed_results.sort(key=lambda x: x.modified, reverse=self.sort_reverse)
+        elif col == "path":
+            self.displayed_results.sort(key=lambda x: x.parent_str.lower(), reverse=self.sort_reverse)
+
+        self.display_results(self.displayed_results)
+
+    def open_file(self, event=None):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        item_id = sel[0]
+        if item_id in self.results_map:
+            file_item = self.results_map[item_id]
+            if file_item.path.exists():
+                try:
+                    if sys.platform == "win32":
+                        os.startfile(str(file_item.path))
+                    else:
+                        webbrowser.open(file_item.path.as_uri())
+                except Exception as e:
+                    messagebox.showerror("Open File Error", f"Could not open file:\n{e}")
+            else:
+                messagebox.showerror("File Not Found", f"File does not exist:\n{file_item.path}")
+
+    def _ctx_open_explorer(self):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        item_id = sel[0]
+        if item_id in self.results_map:
+            file_item = self.results_map[item_id]
+            if file_item.path.exists():
+                try:
+                    if sys.platform == "win32":
+                        subprocess.run(["explorer", "/select,", os.path.normpath(str(file_item.path))], check=False)
+                    else:
+                        webbrowser.open(file_item.path.parent.as_uri())
+                except Exception as e:
+                    messagebox.showerror("Explorer Error", f"Could not open explorer:\n{e}")
+
+    def _ctx_copy_path(self):
+        sel = self.tree.selection()
+        paths = [str(self.results_map[iid].path) for iid in sel if iid in self.results_map]
+        if paths:
+            self.clipboard_clear()
+            self.clipboard_append("\n".join(paths))
+
+    def _ctx_copy_name(self):
+        sel = self.tree.selection()
+        names = [self.results_map[iid].name for iid in sel if iid in self.results_map]
+        if names:
+            self.clipboard_clear()
+            self.clipboard_append("\n".join(names))
+
+
+if __name__ == "__main__":
+    app = FileSearchApp()
+    app.mainloop()
