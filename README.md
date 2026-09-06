@@ -1,16 +1,15 @@
 # FileSearch Pro (FileSearchUtil)
 
-<img width="1175" height="824" alt="image" src="https://github.com/user-attachments/assets/cc627953-0851-4349-8430-9527a8fef8b8" />
-
 A modern, fast, and responsive Desktop File Search & Sort utility built with **CustomTkinter** and **Python 3.13**.
 
 ---
 
 ## Features
 
-- ⚡ **Fast & Progressive Search**: Real-time results streaming with live progress bar and status indicator.
+- ⚡ **Fast & Progressive Search**: Real-time results streaming ordered by **Date Modified (Newest to Oldest)** with live progress bar and status indicator.
 - 🔍 **Rich Query & Pattern Matching**:
-  - `|` (OR Operator): Search for multiple alternative terms (e.g. `ai agent|agents`).
+  - `,` (Comma OR Operator): Delimiter to combine multiple search patterns as **OR** (e.g. `java, j2ee` finds files matching "java" OR "j2ee").
+  - `|` (Pipe OR Operator): Search for alternative terms within a single pattern (e.g. `ai agent|agents`).
   - `NOT` (Exclusion Operator): Exclude single or multiple keywords (e.g. `ai * pattern NOT apress and addison`, `ai agent NOT agents`, or `ai * pattern NOT apress NOT addison`).
   - `*` : Matches zero or more characters (e.g. `java * pattern` matches `Java 17 Design Patterns`).
   - `?` : Matches any single character (e.g. `python?` matches `python3`).

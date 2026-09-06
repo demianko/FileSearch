@@ -589,6 +589,23 @@ class FileSearchApp(ctk.CTk):
         return True
 
     @staticmethod
+    def collect_files_sorted_by_mtime(folder: Path, reverse: bool = True) -> List[Tuple[Path, float]]:
+        """
+        Scans all files recursively in folder and sorts them by last modified date.
+        By default (reverse=True), orders files from newest to oldest.
+        """
+        file_entries: List[Tuple[Path, float]] = []
+        for f in folder.glob("**/*"):
+            try:
+                if f.is_file():
+                    file_entries.append((f, f.stat().st_mtime))
+            except (OSError, PermissionError):
+                continue
+
+        file_entries.sort(key=lambda x: x[1], reverse=reverse)
+        return file_entries
+
+    @staticmethod
     def matches_query(text: str, rules: List[SearchRule], global_excludes: List[re.Pattern]) -> bool:
         """Evaluates whether text satisfies the parsed rules and global exclusions."""
         for ex in global_excludes:
@@ -640,18 +657,15 @@ class FileSearchApp(ctk.CTk):
             self.lbl_status.configure(text=f"Scanning directory: {folder}...")
             self.update_idletasks()
 
-            files = list(folder.glob("**/*"))
-            total_files = len(files)
+            file_entries = self.collect_files_sorted_by_mtime(folder, reverse=True)
+            total_files = len(file_entries)
             start_time = time.time()
             stopped_early = False
 
-            for idx, file in enumerate(files):
+            for idx, (file, mtime) in enumerate(file_entries):
                 if self.cancel_search:
                     stopped_early = True
                     break
-
-                if not file.is_file():
-                    continue
 
                 file_ext = file.suffix.lstrip(".").lower()
                 if not self.matches_extension(file_ext, include_exts, exclude_exts):
@@ -666,7 +680,6 @@ class FileSearchApp(ctk.CTk):
                     continue
 
                 year = self.extract_year(filename)
-                mtime = file.stat().st_mtime
                 item = (file, year, publisher, mtime)
 
                 self.all_results.append(item)

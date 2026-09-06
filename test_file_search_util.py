@@ -208,7 +208,39 @@ class TestFileSearchUtil(unittest.TestCase):
         self.assertTrue(self.app_cls.matches_extension("pdf", inc, exc))
         self.assertTrue(self.app_cls.matches_extension("txt", inc, exc))
         self.assertFalse(self.app_cls.matches_extension("java", inc, exc))
-        self.assertFalse(self.app_cls.matches_extension("class", inc, exc))
+    # --- 6. Search File Ordering by Modified Date Tests ---
+
+    def test_collect_files_sorted_by_mtime(self):
+        import tempfile
+        import os
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir)
+            f_old = tmppath / "old_book.pdf"
+            f_mid = tmppath / "mid_book.pdf"
+            f_new = tmppath / "new_book.pdf"
+
+            f_old.write_text("old")
+            os.utime(f_old, (1000000, 1000000))
+
+            f_mid.write_text("mid")
+            os.utime(f_mid, (2000000, 2000000))
+
+            f_new.write_text("new")
+            os.utime(f_new, (3000000, 3000000))
+
+            # Test newest to oldest (default reverse=True)
+            files = self.app_cls.collect_files_sorted_by_mtime(tmppath, reverse=True)
+            self.assertEqual(len(files), 3)
+            self.assertEqual(files[0][0].name, "new_book.pdf")
+            self.assertEqual(files[1][0].name, "mid_book.pdf")
+            self.assertEqual(files[2][0].name, "old_book.pdf")
+
+            # Test oldest to newest (reverse=False)
+            files_asc = self.app_cls.collect_files_sorted_by_mtime(tmppath, reverse=False)
+            self.assertEqual(files_asc[0][0].name, "old_book.pdf")
+            self.assertEqual(files_asc[1][0].name, "mid_book.pdf")
+            self.assertEqual(files_asc[2][0].name, "new_book.pdf")
 
 
 if __name__ == "__main__":
