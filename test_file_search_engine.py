@@ -99,16 +99,23 @@ class TestFileSearchEngine(unittest.TestCase):
             engine = FileSearchEngine()
             results = engine.list_direct_folder_files(tmppath)
 
-            self.assertEqual(len(results), 2)
+            self.assertEqual(len(results), 3)
             names = [r.name for r in results]
+            self.assertIn("subfolder", names)
             self.assertIn("Wiley - Direct Book - 2023.pdf", names)
             self.assertIn("Packt - Guide - 2022.epub", names)
             self.assertNotIn("nested.pdf", names)
 
-            # Check sort order (newest first)
-            self.assertEqual(results[0].name, "Packt - Guide - 2022.epub")
-            self.assertEqual(results[0].year, 2022)
-            self.assertEqual(results[0].publisher, "packt")
+            # Subfolders are listed first
+            self.assertTrue(results[0].is_directory)
+            self.assertEqual(results[0].name, "subfolder")
+            self.assertEqual(results[0].publisher_display, "Folder")
+
+            # Followed by files sorted newest first
+            self.assertFalse(results[1].is_directory)
+            self.assertEqual(results[1].name, "Packt - Guide - 2022.epub")
+            self.assertEqual(results[1].year, 2022)
+            self.assertEqual(results[1].publisher, "packt")
 
 
 if __name__ == "__main__":

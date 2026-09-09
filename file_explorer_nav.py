@@ -164,7 +164,7 @@ class FileExplorerNav(ctk.CTkFrame):
         if folder_path and self.on_select_callback:
             self.on_select_callback(folder_path)
 
-    def select_path(self, target_path: str):
+    def select_path(self, target_path: str, expand_target: bool = True):
         """Expands and highlights a specific directory path in the tree."""
         if not target_path or not os.path.exists(target_path):
             return
@@ -206,6 +206,20 @@ class FileExplorerNav(ctk.CTkFrame):
                     break
 
             if node_id:
+                if expand_target:
+                    self.tree.item(node_id, open=True)
+                    children = self.tree.get_children(node_id)
+                    if len(children) == 1 and self.tree.item(children[0], "text") == self.DUMMY_NODE_TEXT:
+                        self.tree.delete(children[0])
+                        subdirs = list_subdirectories(curr_path)
+                        for name, full_path, has_kids in subdirs:
+                            norm_p = os.path.normpath(full_path)
+                            child_id = self.tree.insert(node_id, "end", text=f"📁  {name}", open=False)
+                            self.node_path_map[child_id] = norm_p
+                            self.path_node_map[norm_p.lower()] = child_id
+                            if has_kids:
+                                self.tree.insert(child_id, "end", text=self.DUMMY_NODE_TEXT)
+
                 self.tree.selection_set(node_id)
                 self.tree.focus(node_id)
                 self.tree.see(node_id)

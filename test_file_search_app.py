@@ -188,6 +188,32 @@ class TestFileSearchApp(unittest.TestCase):
             app.display_results.assert_called_once_with([item1])
             self.assertEqual(app.all_results, [item1])
 
+    def test_results_tree_select_and_open_folder(self):
+        import tempfile
+
+        app = FileSearchApp.__new__(FileSearchApp)
+        app.tree = MagicMock()
+        app.folder_path = MagicMock()
+        app.save_current_config = MagicMock()
+        app.explorer_nav = MagicMock()
+        app._on_nav_folder_selected = MagicMock()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            subdir = Path(tmp_dir) / "sub_test"
+            subdir.mkdir()
+            folder_item = FileItem(path=subdir, year=0, publisher="Folder", modified=100.0, is_directory=True)
+            app.results_map = {"1": folder_item}
+            app.tree.selection.return_value = ("1",)
+
+            # 1. Selection in results tree updates directory entry & expands left nav
+            app._on_results_tree_select()
+            app.folder_path.set.assert_called_with(str(subdir))
+            app.explorer_nav.select_path.assert_called_with(str(subdir), expand_target=True)
+
+            # 2. Opening folder row (double-click / Enter) navigates into it
+            app.open_file()
+            app._on_nav_folder_selected.assert_called_with(str(subdir))
+
 
 if __name__ == "__main__":
     unittest.main()

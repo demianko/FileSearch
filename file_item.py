@@ -14,9 +14,16 @@ class FileItem:
     year: int
     publisher: str
     modified: float
+    is_directory: bool = False
 
     @property
     def name(self) -> str:
+        return self.path.name
+
+    @property
+    def name_display(self) -> str:
+        if self.is_directory:
+            return f"📁  {self.path.name}"
         return self.path.name
 
     @property
@@ -25,11 +32,15 @@ class FileItem:
 
     @property
     def publisher_display(self) -> str:
+        if self.is_directory:
+            return "Folder"
         return self.publisher.title()
 
     @property
     def year_display(self) -> str:
-        return str(self.year) if self.year > 0 else "-"
+        if self.is_directory or self.year <= 0:
+            return "-"
+        return str(self.year)
 
     @property
     def date_modified_str(self) -> str:

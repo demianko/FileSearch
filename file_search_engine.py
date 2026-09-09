@@ -92,34 +92,50 @@ class FileSearchEngine:
 
     @staticmethod
     def sort_results(results: List[FileItem], sort_by: List[str], reverse: bool = True) -> List[FileItem]:
-        """Sorts a list of FileItems by multi-criteria sort list."""
+        """Sorts a list of FileItems by multi-criteria sort list, keeping folders grouped at top."""
         if not sort_by or not results:
             return results
-        return sorted(results, key=lambda item: item.get_sort_key(sort_by), reverse=reverse)
+        folders = [item for item in results if item.is_directory]
+        files = [item for item in results if not item.is_directory]
+
+        sorted_folders = sorted(folders, key=lambda item: item.get_sort_key(sort_by), reverse=reverse)
+        sorted_files = sorted(files, key=lambda item: item.get_sort_key(sort_by), reverse=reverse)
+
+        return sorted_folders + sorted_files
 
     def list_direct_folder_files(self, folder: Path) -> List[FileItem]:
-        """Lists only files directly located within folder (non-recursive), extracting metadata."""
+        """Lists direct subfolders and files located within folder (non-recursive)."""
         if not folder.exists() or not folder.is_dir():
             return []
-        items: List[FileItem] = []
+        folders: List[FileItem] = []
+        files: List[FileItem] = []
         try:
             with os.scandir(folder) as it:
                 for entry in it:
                     try:
-                        if entry.is_file(follow_symlinks=False):
+                        name = entry.name
+                        if entry.is_dir(follow_symlinks=False):
+                            # Exclude Windows system junctions / trash
+                            if name.upper() in {"$RECYCLE.BIN", "SYSTEM VOLUME INFORMATION"}:
+                                continue
                             stat = entry.stat()
                             mtime = stat.st_mtime
-                            filename = entry.name
                             p = Path(entry.path)
-                            pub = self.metadata_extractor.extract_publisher(filename)
-                            year = self.metadata_extractor.extract_year(filename)
-                            items.append(FileItem(path=p, year=year, publisher=pub, modified=mtime))
+                            folders.append(FileItem(path=p, year=0, publisher="Folder", modified=mtime, is_directory=True))
+                        elif entry.is_file(follow_symlinks=False):
+                            stat = entry.stat()
+                            mtime = stat.st_mtime
+                            p = Path(entry.path)
+                            pub = self.metadata_extractor.extract_publisher(name)
+                            year = self.metadata_extractor.extract_year(name)
+                            files.append(FileItem(path=p, year=year, publisher=pub, modified=mtime, is_directory=False))
                     except (OSError, PermissionError):
                         continue
         except (OSError, PermissionError):
             return []
 
-        # Sort newest to oldest by default
-        items.sort(key=lambda item: item.modified, reverse=True)
-        return items
+        # Sort folders alphabetically A-Z by default, files newest to oldest by default
+        folders.sort(key=lambda f: f.name.lower())
+        files.sort(key=lambda item: item.modified, reverse=True)
+        return folders + files
 

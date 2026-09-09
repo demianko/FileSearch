@@ -379,10 +379,32 @@ class FileSearchApp(ctk.CTk):
 
         # Bindings
         self.tree.bind("<Double-1>", self.open_file)
+        self.tree.bind("<Return>", self._on_tree_return)
+        self.tree.bind("<KP_Enter>", self._on_tree_return)
+        self.tree.bind("<<TreeviewSelect>>", self._on_results_tree_select)
         self.tree.bind("<Configure>", self._on_tree_resize)
         self.tree.bind("<ButtonPress-1>", self._on_tree_press)
         self.tree.bind("<B1-Motion>", self._on_tree_motion)
         self.tree.bind("<ButtonRelease-1>", self._on_tree_release)
+
+    def _on_tree_return(self, event=None):
+        """Enter key on results table: opens or navigates into the selected item."""
+        self.open_file()
+        return "break"
+
+    def _on_results_tree_select(self, event=None):
+        """When a folder row in search results is clicked/selected, update directory input and expand left nav."""
+        sel = self.tree.selection()
+        if not sel or len(sel) != 1:
+            return
+        item_id = sel[0]
+        if item_id in self.results_map:
+            file_item = self.results_map[item_id]
+            if file_item.is_directory and file_item.path.exists():
+                folder_str = str(file_item.path)
+                self.folder_path.set(folder_str)
+                self.save_current_config()
+                self.explorer_nav.select_path(folder_str, expand_target=True)
 
     def _on_tree_press(self, event):
         """Records initial mouse coordinates and manages selection for drag vs click."""
@@ -588,12 +610,16 @@ class FileSearchApp(ctk.CTk):
             self.context_menu.delete(0, "end")
 
             if count == 1:
-                self.context_menu.add_command(label="▶ Open File", accelerator="Double-Click", command=self.open_file)
-                self.context_menu.add_command(label="🎨 Open File With...", command=self.open_file_with)
-                self.context_menu.add_command(label="📁 Open Containing Folder in Explorer", command=self._ctx_open_explorer)
+                item_id = current_selection[0]
+                is_dir = item_id in self.results_map and self.results_map[item_id].is_directory
+                open_label = "📂 Open Folder" if is_dir else "▶ Open File"
+                self.context_menu.add_command(label=open_label, accelerator="Double-Click / Enter", command=self.open_file)
+                if not is_dir:
+                    self.context_menu.add_command(label="🎨 Open File With...", command=self.open_file_with)
+                self.context_menu.add_command(label="📁 Open in Explorer", command=self._ctx_open_explorer)
                 self.context_menu.add_separator()
                 self.context_menu.add_command(label="📋 Copy Full Path", accelerator="Ctrl+C", command=self._ctx_copy_path)
-                self.context_menu.add_command(label="📄 Copy File Name", command=self._ctx_copy_name)
+                self.context_menu.add_command(label="📄 Copy Name", command=self._ctx_copy_name)
                 self.context_menu.add_command(label="📂 Copy Folder Path", command=self._ctx_copy_folder)
             else:
                 self.context_menu.add_command(label=f"▶ Open {count} Files", command=self.open_file)
@@ -741,7 +767,7 @@ class FileSearchApp(ctk.CTk):
                 self.results_map[item_id] = item
                 self.tree.insert(
                     "", "end", iid=item_id,
-                    values=(item.name, item.publisher_display, item.year_display, item.date_modified_str, item.parent_str)
+                    values=(item.name_display, item.publisher_display, item.year_display, item.date_modified_str, item.parent_str)
                 )
 
                 progress_ratio = scanned_count / total_count if total_count > 0 else 1.0
@@ -798,7 +824,7 @@ class FileSearchApp(ctk.CTk):
             self.results_map[item_id] = item
             self.tree.insert(
                 "", "end", iid=item_id,
-                values=(item.name, item.publisher_display, item.year_display, item.date_modified_str, item.parent_str)
+                values=(item.name_display, item.publisher_display, item.year_display, item.date_modified_str, item.parent_str)
             )
         self.lbl_count.configure(text=f"{len(files):,} files found")
 
@@ -843,7 +869,12 @@ class FileSearchApp(ctk.CTk):
         for item_id in sel:
             if item_id in self.results_map:
                 file_item = self.results_map[item_id]
-                if file_item.path.exists():
+                if file_item.is_directory and file_item.path.exists():
+                    folder_str = str(file_item.path)
+                    self._on_nav_folder_selected(folder_str)
+                    self.explorer_nav.select_path(folder_str, expand_target=True)
+                    return
+                elif file_item.path.exists():
                     try:
                         if sys.platform == "win32":
                             os.startfile(str(file_item.path))
@@ -903,7 +934,11 @@ class FileSearchApp(ctk.CTk):
             if file_item.path.exists():
                 try:
                     if sys.platform == "win32":
-                        subprocess.run(["explorer", "/select,", os.path.normpath(str(file_item.path))], check=False)
+                        norm = os.path.normpath(str(file_item.path))
+                        if file_item.is_directory:
+                            subprocess.run(["explorer", norm], check=False)
+                        else:
+                            subprocess.run(["explorer", "/select,", norm], check=False)
                     else:
                         webbrowser.open(file_item.path.parent.as_uri())
                 except Exception as e:

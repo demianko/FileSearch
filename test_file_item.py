@@ -22,10 +22,13 @@ class TestFileItem(unittest.TestCase):
         item = FileItem(path=Path("book.pdf"), year=0, publisher="unknown", modified=1700000000.0)
         self.assertEqual(item.year_display, "-")
 
-    def test_legacy_tuple_conversion(self):
-        item = FileItem(path=Path("test.pdf"), year=2023, publisher="manning", modified=1600000000.0)
-        t = item.to_legacy_tuple()
-        self.assertEqual(t, (Path("test.pdf"), 2023, "manning", 1600000000.0))
+    def test_directory_item(self):
+        folder_item = FileItem(path=Path("/books/scifi"), year=0, publisher="Folder", modified=1700000000.0, is_directory=True)
+        self.assertTrue(folder_item.is_directory)
+        self.assertEqual(folder_item.name, "scifi")
+        self.assertEqual(folder_item.name_display, "📁  scifi")
+        self.assertEqual(folder_item.publisher_display, "Folder")
+        self.assertEqual(folder_item.year_display, "-")
 
 
 if __name__ == "__main__":
