@@ -14,6 +14,7 @@ import customtkinter as ctk
 
 from app_config import AppConfig, ConfigManager
 from extension_filter import ExtensionFilter
+from file_explorer_nav import FileExplorerNav
 from file_item import FileItem
 from file_search_engine import FileSearchEngine
 from metadata_extractor import MetadataExtractor
@@ -58,8 +59,8 @@ class FileSearchApp(ctk.CTk):
         config = self.config_manager.load()
 
         self.title("FileSearch Pro — Fast Search & Sort")
-        self.geometry("1200x840")
-        self.minsize(980, 640)
+        self.geometry("1350x850")
+        self.minsize(1050, 650)
 
         # Reactive State Variables loaded from config
         self.folder_path = tk.StringVar(value=config.directory)
@@ -91,6 +92,11 @@ class FileSearchApp(ctk.CTk):
         # Handle window closing to save configuration
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
+        # Select initial directory in explorer navigation tree
+        initial_dir = self.folder_path.get().strip()
+        if initial_dir and os.path.exists(initial_dir):
+            self.after(100, lambda: self.explorer_nav.select_path(initial_dir))
+
     def save_current_config(self):
         """Persists the current user inputs into ~/.filesearch/config."""
         config = AppConfig(
@@ -110,25 +116,51 @@ class FileSearchApp(ctk.CTk):
         self.destroy()
 
     def _create_widgets(self):
-        # Configure root grid
-        self.grid_rowconfigure(2, weight=1)
+        # Configure root layout
+        self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
+        # Style ttk Panedwindow
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure("TPanedwindow", background="#1a1a1a")
+
+        # Root PanedWindow: Left File Explorer Panel + Right Search Workspace
+        self.paned_window = ttk.PanedWindow(self, orient="horizontal")
+        self.paned_window.grid(row=0, column=0, padx=12, pady=12, sticky="nsew")
+
+        # Left Panel: File Explorer Navigation Pane (full window height)
+        self.explorer_nav = FileExplorerNav(
+            self.paned_window,
+            width=280,
+            on_select_callback=self._on_nav_folder_selected,
+        )
+
+        # Right Panel: Workspace Container holding Controls, Filter, Results Table & Footer
+        right_container = ctk.CTkFrame(self.paned_window, fg_color="transparent")
+        right_container.grid_rowconfigure(2, weight=1)
+        right_container.grid_columnconfigure(0, weight=1)
+
+        self.paned_window.add(self.explorer_nav, weight=1)
+        self.paned_window.add(right_container, weight=4)
+        self.after(50, self._init_paned_sash)
+
         # 1. Top Card: Folder Selection & Search Inputs
-        self._build_controls_card()
+        self._build_controls_card(right_container)
 
         # 2. Progress & Live Filter Bar
-        self._build_progress_and_filter_card()
+        self._build_progress_and_filter_card(right_container)
 
-        # 3. Center Card: Modern Results Table
-        self._build_results_card()
+        # 3. Center Card: Modern Results Table (occupies full width of right workspace)
+        self._build_results_card(right_container)
 
         # 4. Bottom Footer: Status Bar
-        self._build_footer_status()
+        self._build_footer_status(right_container)
 
-    def _build_controls_card(self):
-        top_card = ctk.CTkFrame(self, corner_radius=12, border_width=1, border_color="#333333")
-        top_card.grid(row=0, column=0, padx=16, pady=(16, 8), sticky="ew")
+    def _build_controls_card(self, parent=None):
+        parent = parent or self
+        top_card = ctk.CTkFrame(parent, corner_radius=12, border_width=1, border_color="#333333")
+        top_card.grid(row=0, column=0, padx=(8, 0), pady=(0, 8), sticky="ew")
         top_card.grid_columnconfigure(1, weight=1)
         top_card.grid_columnconfigure(3, weight=1)
 
@@ -264,9 +296,10 @@ class FileSearchApp(ctk.CTk):
         self.bind("<KP_Enter>", self.search_files)
         self.bind("<Escape>", self.stop_search)
 
-    def _build_progress_and_filter_card(self):
-        mid_card = ctk.CTkFrame(self, corner_radius=10, fg_color="transparent")
-        mid_card.grid(row=1, column=0, padx=16, pady=(0, 6), sticky="ew")
+    def _build_progress_and_filter_card(self, parent=None):
+        parent = parent or self
+        mid_card = ctk.CTkFrame(parent, corner_radius=10, fg_color="transparent")
+        mid_card.grid(row=1, column=0, padx=(8, 0), pady=(0, 6), sticky="ew")
         mid_card.grid_columnconfigure(1, weight=1)
 
         # Progress bar
@@ -288,15 +321,15 @@ class FileSearchApp(ctk.CTk):
         self.filter_entry.grid(row=1, column=1, padx=(0, 0), pady=0, sticky="ew")
         self.filter_entry.bind("<KeyRelease>", self.filter_results)
 
-    def _build_results_card(self):
-        results_frame = ctk.CTkFrame(self, corner_radius=12, border_width=1, border_color="#333333")
-        results_frame.grid(row=2, column=0, padx=16, pady=(0, 8), sticky="nsew")
+    def _build_results_card(self, parent=None):
+        parent = parent or self
+        results_frame = ctk.CTkFrame(parent, corner_radius=12, border_width=1, border_color="#333333")
+        results_frame.grid(row=2, column=0, padx=(8, 0), pady=(0, 8), sticky="nsew")
         results_frame.grid_rowconfigure(0, weight=1)
         results_frame.grid_columnconfigure(0, weight=1)
 
         # Modern Treeview Styling
         style = ttk.Style()
-        style.theme_use("clam")
         style.configure(
             "Modern.Treeview",
             background="#1e1e1e",
@@ -420,9 +453,10 @@ class FileSearchApp(ctk.CTk):
             self.tree.column("date", width=date_w)
             self.tree.column("path", width=path_w)
 
-    def _build_footer_status(self):
-        footer_frame = ctk.CTkFrame(self, height=32, corner_radius=0, fg_color="transparent")
-        footer_frame.grid(row=3, column=0, padx=16, pady=(0, 10), sticky="ew")
+    def _build_footer_status(self, parent=None):
+        parent = parent or self
+        footer_frame = ctk.CTkFrame(parent, height=32, corner_radius=0, fg_color="transparent")
+        footer_frame.grid(row=3, column=0, padx=(8, 0), pady=(0, 2), sticky="ew")
         footer_frame.grid_columnconfigure(0, weight=1)
 
         self.lbl_status = ctk.CTkLabel(
@@ -582,11 +616,45 @@ class FileSearchApp(ctk.CTk):
         if children:
             self.tree.selection_set(children)
 
+    def _init_paned_sash(self):
+        try:
+            self.paned_window.sashpos(0, 280)
+        except Exception:
+            pass
+
+    def _on_nav_folder_selected(self, folder_path: str):
+        """Called when a folder is selected in the left navigation pane."""
+        if not folder_path or not os.path.exists(folder_path):
+            return
+        self.folder_path.set(folder_path)
+        self.save_current_config()
+        self._load_direct_folder_files(folder_path)
+
+    def _load_direct_folder_files(self, folder_path: str):
+        """Populates the search results table with direct files in folder_path (non-recursive)."""
+        folder = Path(folder_path)
+        if not folder.exists() or not folder.is_dir():
+            return
+
+        self.reset()
+        files = self.search_engine.list_direct_folder_files(folder)
+
+        sort_by = [s.strip().lower() for s in self.sort_by.get().split(",") if s.strip()]
+        if sort_by and files:
+            files = self.search_engine.sort_results(files, sort_by, reverse=True)
+
+        self.all_results = files
+        self.display_results(files)
+        self.lbl_status.configure(text=f"Showing direct files in '{folder.name}' (non-recursive)")
+        self.lbl_count.configure(text=f"{len(files):,} files found")
+
     def select_folder(self):
         folder = filedialog.askdirectory(initialdir=self.folder_path.get())
         if folder:
             self.folder_path.set(folder)
             self.save_current_config()
+            self.explorer_nav.select_path(folder)
+            self._load_direct_folder_files(folder)
 
     def reset(self):
         self.progress.set(0)

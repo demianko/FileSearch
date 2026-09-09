@@ -154,6 +154,40 @@ class TestFileSearchApp(unittest.TestCase):
             app.results_map["1"].path = Path(__file__).resolve()
             app.open_file_with()
 
+    def test_nav_folder_selection_and_load(self):
+        import tempfile
+
+        app = FileSearchApp.__new__(FileSearchApp)
+        app.folder_path = MagicMock()
+        app.sort_by = MagicMock()
+        app.sort_by.get.return_value = "modified"
+        app.save_current_config = MagicMock()
+        app.reset = MagicMock()
+        app.display_results = MagicMock()
+        app.lbl_status = MagicMock()
+        app.lbl_count = MagicMock()
+        app.search_engine = MagicMock()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            file1 = Path(tmp_dir) / "alpha.txt"
+            file1.write_text("hello")
+            item1 = FileItem(path=file1, year=2024, publisher="packt", modified=100.0)
+            app.search_engine.list_direct_folder_files.return_value = [item1]
+            app.search_engine.sort_results.return_value = [item1]
+
+            # 1. Non-existent path -> ignored
+            app._on_nav_folder_selected("Z:\\does_not_exist_999")
+            app.save_current_config.assert_not_called()
+
+            # 2. Existing folder -> updates folder_path, saves config, loads direct files
+            app._on_nav_folder_selected(tmp_dir)
+            app.folder_path.set.assert_called_once_with(tmp_dir)
+            app.save_current_config.assert_called_once()
+            app.reset.assert_called_once()
+            app.search_engine.list_direct_folder_files.assert_called_once_with(Path(tmp_dir))
+            app.display_results.assert_called_once_with([item1])
+            self.assertEqual(app.all_results, [item1])
+
 
 if __name__ == "__main__":
     unittest.main()

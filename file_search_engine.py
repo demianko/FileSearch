@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
@@ -95,3 +96,30 @@ class FileSearchEngine:
         if not sort_by or not results:
             return results
         return sorted(results, key=lambda item: item.get_sort_key(sort_by), reverse=reverse)
+
+    def list_direct_folder_files(self, folder: Path) -> List[FileItem]:
+        """Lists only files directly located within folder (non-recursive), extracting metadata."""
+        if not folder.exists() or not folder.is_dir():
+            return []
+        items: List[FileItem] = []
+        try:
+            with os.scandir(folder) as it:
+                for entry in it:
+                    try:
+                        if entry.is_file(follow_symlinks=False):
+                            stat = entry.stat()
+                            mtime = stat.st_mtime
+                            filename = entry.name
+                            p = Path(entry.path)
+                            pub = self.metadata_extractor.extract_publisher(filename)
+                            year = self.metadata_extractor.extract_year(filename)
+                            items.append(FileItem(path=p, year=year, publisher=pub, modified=mtime))
+                    except (OSError, PermissionError):
+                        continue
+        except (OSError, PermissionError):
+            return []
+
+        # Sort newest to oldest by default
+        items.sort(key=lambda item: item.modified, reverse=True)
+        return items
+

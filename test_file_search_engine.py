@@ -80,6 +80,36 @@ class TestFileSearchEngine(unittest.TestCase):
         self.assertEqual(sorted_items[0].year, 2024)
         self.assertEqual(sorted_items[1].year, 2020)
 
+    def test_list_direct_folder_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir)
+            # Direct files
+            f1 = tmppath / "Wiley - Direct Book - 2023.pdf"
+            f2 = tmppath / "Packt - Guide - 2022.epub"
+            f1.write_text("1")
+            f2.write_text("2")
+            os.utime(f1, (1000000, 1000000))
+            os.utime(f2, (2000000, 2000000))
+
+            # Subdirectory with a file inside (should NOT be included)
+            subdir = tmppath / "subfolder"
+            subdir.mkdir()
+            (subdir / "nested.pdf").write_text("nested")
+
+            engine = FileSearchEngine()
+            results = engine.list_direct_folder_files(tmppath)
+
+            self.assertEqual(len(results), 2)
+            names = [r.name for r in results]
+            self.assertIn("Wiley - Direct Book - 2023.pdf", names)
+            self.assertIn("Packt - Guide - 2022.epub", names)
+            self.assertNotIn("nested.pdf", names)
+
+            # Check sort order (newest first)
+            self.assertEqual(results[0].name, "Packt - Guide - 2022.epub")
+            self.assertEqual(results[0].year, 2022)
+            self.assertEqual(results[0].publisher, "packt")
+
 
 if __name__ == "__main__":
     unittest.main()
