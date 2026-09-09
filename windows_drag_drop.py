@@ -8,10 +8,13 @@ as well as text and URL clipboard formats.
 
 from __future__ import annotations
 
+import atexit
 import os
 from pathlib import Path
+import re
 import sys
 from typing import List, Sequence, Union
+import unicodedata
 
 FilePathType = Union[str, Path]
 
@@ -108,8 +111,8 @@ if IS_WINDOWS:
     ole32.OleInitialize(None)
 
     # Register additional Windows clipboard formats
+    CF_FILENAME = user32.RegisterClipboardFormatW("FileName")
     CF_FILENAMEW = user32.RegisterClipboardFormatW("FileNameW")
-    CF_FILENAMEA = user32.RegisterClipboardFormatW("FileName")
     CF_URLW = user32.RegisterClipboardFormatW("UniformResourceLocatorW")
 
     kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
@@ -119,6 +122,15 @@ if IS_WINDOWS:
     kernel32.GlobalUnlock.restype = wintypes.BOOL
     kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
 
+    kernel32.CreateHardLinkW.restype = wintypes.BOOL
+    kernel32.CreateHardLinkW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, c_void_p]
+    kernel32.DefineDosDeviceW.restype = wintypes.BOOL
+    kernel32.DefineDosDeviceW.argtypes = [wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR]
+    kernel32.GetLogicalDrives.restype = wintypes.DWORD
+    kernel32.GetLogicalDrives.argtypes = []
+    kernel32.SetFileAttributesW.restype = wintypes.BOOL
+    kernel32.SetFileAttributesW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD]
+
     shell32.SHCreateStdEnumFmtEtc.restype = HRESULT
     shell32.SHCreateStdEnumFmtEtc.argtypes = [wintypes.UINT, c_void_p, POINTER(c_void_p)]
 
@@ -127,6 +139,17 @@ if IS_WINDOWS:
 
     class POINT(Structure):
         _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
+
+    user32.GetCursorPos.restype = wintypes.BOOL
+    user32.GetCursorPos.argtypes = [POINTER(POINT)]
+    user32.WindowFromPoint.restype = wintypes.HWND
+    user32.WindowFromPoint.argtypes = [POINT]
+    user32.GetAncestor.restype = wintypes.HWND
+    user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+    user32.GetClassNameW.restype = ctypes.c_int
+    user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.PostMessageW.restype = wintypes.BOOL
+    user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
 
     class DROPFILES(Structure):
         _fields_ = [
@@ -138,7 +161,7 @@ if IS_WINDOWS:
 
     class FORMATETC(Structure):
         _fields_ = [
-            ("cfFormat", wintypes.UINT),
+            ("cfFormat", c_ushort),
             ("ptd", c_void_p),
             ("dwAspect", wintypes.DWORD),
             ("lindex", wintypes.LONG),
@@ -152,7 +175,7 @@ if IS_WINDOWS:
             ("pUnkForRelease", c_void_p),
         ]
 
-    # Data builders for clipboard formats
+    # Data builders for clipboard formats (pure UTF-16 Unicode to prevent lossy ANSI '??' replacement)
     def _create_hdrop_buffer(file_paths: List[str]) -> wintypes.HGLOBAL:
         header_size = sizeof(DROPFILES)
         encoded_paths = b"".join(p.encode("utf-16le") + b"\x00\x00" for p in file_paths) + b"\x00\x00"
@@ -182,9 +205,116 @@ if IS_WINDOWS:
             kernel32.GlobalUnlock(hmem)
         return hmem
 
+    _active_dos_drives: dict[str, str] = {}
+    _created_hard_links: List[str] = []
+
+    def _cleanup_drag_resources():
+        global _active_dos_drives, _created_hard_links
+        for drive_letter in list(_active_dos_drives.values()):
+            try:
+                kernel32.DefineDosDeviceW(2, drive_letter, None)
+            except Exception:
+                pass
+        _active_dos_drives.clear()
+        for link in list(_created_hard_links):
+            try:
+                if os.path.exists(link):
+                    os.remove(link)
+            except Exception:
+                pass
+        _created_hard_links.clear()
+
+    atexit.register(_cleanup_drag_resources)
+
+    def _get_or_create_dos_drive_for_dir(target_dir: str) -> str:
+        global _active_dos_drives
+        target_norm = os.path.normpath(target_dir).lower()
+        if target_norm in _active_dos_drives:
+            return _active_dos_drives[target_norm]
+
+        drives_mask = kernel32.GetLogicalDrives()
+        for i in range(25, 3, -1):  # Z: down to D:
+            if not (drives_mask & (1 << i)):
+                drive_letter = f"{chr(ord('A') + i)}:"
+                res = kernel32.DefineDosDeviceW(0, drive_letter, target_dir)
+                if res:
+                    _active_dos_drives[target_norm] = drive_letter
+                    return drive_letter
+        return ""
+
+    def _get_ascii_safe_path(p: str) -> str:
+        """Returns a path pointing to the file that can be cleanly decoded by ANSI-only media players like GOM Player."""
+        # 1. Already encodable in the Windows ANSI code page (mbcs/ASCII)?
+        try:
+            p.encode("mbcs")
+            return p
+        except (UnicodeEncodeError, LookupError):
+            pass
+
+        # 2. Try Win32 8.3 short path
+        buf = ctypes.create_unicode_buffer(1024)
+        res = kernel32.GetShortPathNameW(p, buf, 1024)
+        if res > 0 and buf.value:
+            try:
+                buf.value.encode("mbcs")
+                return buf.value
+            except (UnicodeEncodeError, LookupError):
+                pass
+
+        # 3. If on a drive with a root, try an NTFS hard link in a hidden cache directory on the same volume
+        drive, _ = os.path.splitdrive(p)
+        if drive and os.path.exists(drive + "\\"):
+            cache_dir = os.path.join(drive + "\\", ".fsu_drag_cache")
+            try:
+                os.makedirs(cache_dir, exist_ok=True)
+                kernel32.SetFileAttributesW(cache_dir, 0x02)  # FILE_ATTRIBUTE_HIDDEN
+                filename = os.path.basename(p)
+                try:
+                    filename.encode("mbcs")
+                    link_name = filename
+                except (UnicodeEncodeError, LookupError):
+                    name_no_ext, ext = os.path.splitext(filename)
+                    norm = unicodedata.normalize("NFKD", name_no_ext)
+                    ascii_name = norm.encode("ascii", errors="replace").decode("ascii").replace("?", "_")
+                    ascii_name = re.sub(r"_+", "_", ascii_name).strip("._ ")
+                    if not ascii_name:
+                        ascii_name = f"media_{abs(hash(p)) % 10000000}"
+                    link_name = f"{ascii_name}{ext}"
+                link_path = os.path.join(cache_dir, link_name)
+                if os.path.exists(link_path):
+                    return link_path
+                if kernel32.CreateHardLinkW(link_path, p, None):
+                    _created_hard_links.append(link_path)
+                    return link_path
+            except Exception:
+                pass
+
+        # 4. Try DefineDosDeviceW to map a virtual drive to the directory if the filename itself is encodable
+        dirname, filename = os.path.split(p)
+        try:
+            filename.encode("mbcs")
+            dos_drive = _get_or_create_dos_drive_for_dir(dirname)
+            if dos_drive:
+                mapped_path = f"{dos_drive}\\{filename}"
+                mapped_path.encode("mbcs")
+                return mapped_path
+        except Exception:
+            pass
+
+        # 5. Fallback: lossy mbcs replacement
+        try:
+            return p.encode("mbcs", errors="replace").decode("mbcs")
+        except Exception:
+            return p
+
     def _create_text_buffer(file_paths: List[str]) -> wintypes.HGLOBAL:
-        text = "\r\n".join(file_paths)
-        encoded = text.encode("mbcs", errors="replace") + b"\x00"
+        safe_paths = [_get_ascii_safe_path(p) for p in file_paths]
+        text = "\r\n".join(safe_paths)
+        try:
+            encoded = text.encode("mbcs") + b"\x00"
+        except Exception:
+            encoded = text.encode("utf-8", errors="replace") + b"\x00"
+
         hmem = kernel32.GlobalAlloc(GHND, len(encoded))
         ptr = kernel32.GlobalLock(hmem)
         try:
@@ -193,7 +323,7 @@ if IS_WINDOWS:
             kernel32.GlobalUnlock(hmem)
         return hmem
 
-    def _create_filenamew_buffer(file_paths: List[str]) -> wintypes.HGLOBAL:
+    def _create_filename_buffer(file_paths: List[str]) -> wintypes.HGLOBAL:
         encoded = file_paths[0].encode("utf-16le") + b"\x00\x00"
         hmem = kernel32.GlobalAlloc(GHND, len(encoded))
         ptr = kernel32.GlobalLock(hmem)
@@ -203,8 +333,12 @@ if IS_WINDOWS:
             kernel32.GlobalUnlock(hmem)
         return hmem
 
-    def _create_filenamea_buffer(file_paths: List[str]) -> wintypes.HGLOBAL:
-        encoded = file_paths[0].encode("mbcs", errors="replace") + b"\x00"
+    def _create_filename_ansi_buffer(file_paths: List[str]) -> wintypes.HGLOBAL:
+        safe_path = _get_ascii_safe_path(file_paths[0])
+        try:
+            encoded = safe_path.encode("mbcs") + b"\x00"
+        except Exception:
+            encoded = safe_path.encode("ascii", errors="replace") + b"\x00"
         hmem = kernel32.GlobalAlloc(GHND, len(encoded))
         ptr = kernel32.GlobalLock(hmem)
         try:
@@ -224,12 +358,14 @@ if IS_WINDOWS:
             kernel32.GlobalUnlock(hmem)
         return hmem
 
+    # Full set of clipboard formats for maximum compatibility with Explorer, GOM Player,
+    # browsers, text editors, and media players.
     SUPPORTED_FORMATS = [
         (CF_HDROP, _create_hdrop_buffer),
         (CF_UNICODETEXT, _create_unicodetext_buffer),
         (CF_TEXT, _create_text_buffer),
-        (CF_FILENAMEW, _create_filenamew_buffer),
-        (CF_FILENAMEA, _create_filenamea_buffer),
+        (CF_FILENAMEW, _create_filename_buffer),
+        (CF_FILENAME, _create_filename_ansi_buffer),
         (CF_URLW, _create_urlw_buffer),
     ]
 
@@ -260,10 +396,46 @@ if IS_WINDOWS:
     def _drop_source_release(this):
         return 1
 
+    def _post_wm_dropfiles(hwnd: wintypes.HWND, file_paths: List[str]) -> bool:
+        if not hwnd or not file_paths:
+            return False
+        encoded = ("\x00".join(file_paths) + "\x00\x00").encode("utf-16le")
+        header_size = sizeof(DROPFILES)
+        total_size = header_size + len(encoded)
+        hmem = kernel32.GlobalAlloc(GHND, total_size)
+        if not hmem:
+            return False
+        ptr = kernel32.GlobalLock(hmem)
+        if not ptr:
+            return False
+        try:
+            df = DROPFILES()
+            df.pFiles = header_size
+            df.pt = POINT(0, 0)
+            df.fNC = 0
+            df.fWide = 1
+            memmove(ptr, byref(df), header_size)
+            memmove(ptr + header_size, encoded, len(encoded))
+        finally:
+            kernel32.GlobalUnlock(hmem)
+        return bool(user32.PostMessageW(hwnd, 0x0233, hmem, 0))
+
     def _drop_source_query_continue_drag(this, f_escape_pressed, grf_key_state):
         if f_escape_pressed:
             return DRAGDROP_S_CANCEL
         if not (grf_key_state & (MK_LBUTTON | MK_RBUTTON)):
+            # Check if dropped over GOM Player window
+            pt = POINT()
+            if user32.GetCursorPos(byref(pt)):
+                target = user32.WindowFromPoint(pt)
+                if target:
+                    root = user32.GetAncestor(target, 2) or target
+                    cname = ctypes.create_unicode_buffer(256)
+                    user32.GetClassNameW(root, cname, 256)
+                    if cname.value == "GomPlayer1.x" or "gom" in cname.value.lower():
+                        if _active_drag_files:
+                            _post_wm_dropfiles(root, _active_drag_files)
+                        return DRAGDROP_S_CANCEL
             return DRAGDROP_S_DROP
         return 0  # S_OK
 
@@ -325,10 +497,11 @@ if IS_WINDOWS:
         if not p_formatetc or not p_medium or not _active_drag_files:
             return DV_E_FORMATETC
         fetc = p_formatetc.contents
-        if not (fetc.tymed & TYMED_HGLOBAL):
+        if fetc.tymed != 0 and not (fetc.tymed & TYMED_HGLOBAL):
             return DV_E_FORMATETC
+        cf_req = fetc.cfFormat & 0xFFFF
         for cf, builder in SUPPORTED_FORMATS:
-            if fetc.cfFormat == cf:
+            if (cf & 0xFFFF) == cf_req:
                 p_medium.contents.tymed = TYMED_HGLOBAL
                 p_medium.contents.hGlobal = builder(_active_drag_files)
                 p_medium.contents.pUnkForRelease = None
@@ -342,10 +515,11 @@ if IS_WINDOWS:
         if not p_formatetc:
             return DV_E_FORMATETC
         fetc = p_formatetc.contents
-        if not (fetc.tymed & TYMED_HGLOBAL):
+        if fetc.tymed != 0 and not (fetc.tymed & TYMED_HGLOBAL):
             return DV_E_FORMATETC
+        cf_req = fetc.cfFormat & 0xFFFF
         for cf, _ in SUPPORTED_FORMATS:
-            if fetc.cfFormat == cf:
+            if (cf & 0xFFFF) == cf_req:
                 return 0
         return DV_E_FORMATETC
 
@@ -418,6 +592,61 @@ if IS_WINDOWS:
     ]
 
 
+def get_unc_to_drive_map() -> dict[str, str]:
+    """Returns a dictionary mapping lowercase UNC share roots (e.g. '\\\\server\\share')
+    to their mapped drive letters (e.g. 'Z:')."""
+    if not IS_WINDOWS:
+        return {}
+    mapping = {}
+    try:
+        mpr = ctypes.windll.mpr
+        WNetGetConnectionW = mpr.WNetGetConnectionW
+        WNetGetConnectionW.restype = wintypes.DWORD
+        WNetGetConnectionW.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, POINTER(wintypes.DWORD)]
+
+        buf = ctypes.create_unicode_buffer(1024)
+        buf_size = wintypes.DWORD(1024)
+        for c in range(ord("A"), ord("Z") + 1):
+            drive = f"{chr(c)}:"
+            buf_size.value = 1024
+            res = WNetGetConnectionW(drive, buf, byref(buf_size))
+            if res == 0 and buf.value:
+                unc = buf.value.rstrip("\\/").lower()
+                mapping[unc] = drive
+    except Exception:
+        pass
+    return mapping
+
+
+def normalize_drag_path(fp: FilePathType) -> str:
+    """Normalizes a file path for Windows drag-and-drop and shell execution.
+
+    Preserves mapped network drive letters (e.g. X:\\, Z:\\) instead of resolving
+    them to UNC paths (which cause 'File not found' errors in media players like GOM Player).
+    If a UNC path is provided that corresponds to an existing mapped network drive,
+    restores the mapped drive letter.
+    """
+    p_str = str(fp).strip()
+    if not p_str:
+        return ""
+
+    # os.path.abspath resolves relative paths and standardizes slashes to backslashes
+    # WITHOUT dereferencing mapped drive letters into UNC paths.
+    abs_p = os.path.abspath(p_str)
+
+    # If it is a UNC path (starts with \\), check if a mapped drive letter exists for it
+    if IS_WINDOWS and abs_p.startswith(r"\\"):
+        unc_map = get_unc_to_drive_map()
+        lower_abs = abs_p.lower()
+        for unc_prefix, drive_letter in sorted(unc_map.items(), key=lambda x: len(x[0]), reverse=True):
+            if lower_abs == unc_prefix:
+                return drive_letter + "\\"
+            if lower_abs.startswith(unc_prefix + "\\"):
+                return drive_letter + abs_p[len(unc_prefix):]
+
+    return abs_p
+
+
 def start_drag(file_paths: Sequence[FilePathType]) -> int:
     """Initiates a native Windows drag-and-drop operation for the given file paths.
 
@@ -434,9 +663,9 @@ def start_drag(file_paths: Sequence[FilePathType]) -> int:
 
     valid_paths: List[str] = []
     for fp in file_paths:
-        abs_p = str(Path(fp).resolve())
-        if os.path.exists(abs_p):
-            valid_paths.append(abs_p)
+        norm_p = normalize_drag_path(fp)
+        if norm_p and os.path.exists(norm_p):
+            valid_paths.append(norm_p)
 
     if not valid_paths:
         return 0
@@ -455,5 +684,3 @@ def start_drag(file_paths: Sequence[FilePathType]) -> int:
         return int(dw_effect.value)
     except Exception:
         return 0
-    finally:
-        _active_drag_files = []

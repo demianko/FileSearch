@@ -20,7 +20,7 @@ from metadata_extractor import MetadataExtractor
 from query_matcher import QueryMatcher
 from query_parser import QueryParser
 from search_rule import SearchRule
-from windows_drag_drop import start_drag
+from windows_drag_drop import normalize_drag_path, start_drag
 
 
 # Configure CustomTkinter Appearance
@@ -797,7 +797,7 @@ class FileSearchApp(ctk.CTk):
             if file_item.path.exists():
                 try:
                     if sys.platform == "win32":
-                        resolved_path = os.path.normpath(str(file_item.path.resolve()))
+                        resolved_path = normalize_drag_path(str(file_item.path))
                         try:
                             import ctypes
                             from ctypes import Structure, POINTER, byref, wintypes, HRESULT

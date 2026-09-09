@@ -147,7 +147,9 @@ class TestFileSearchApp(unittest.TestCase):
         app.empty_context_menu.post.assert_called_with(100, 150)
 
         # Test open_file_with delegate
-        with patch("subprocess.Popen") as mock_popen, patch("os.path.exists", return_value=True):
+        with patch("subprocess.Popen") as mock_popen, patch("os.path.exists", return_value=True), patch(
+            "ctypes.windll.shell32.SHOpenWithDialog", return_value=0, create=True
+        ):
             app.tree.selection.return_value = ("1",)
             app.results_map["1"].path = Path(__file__).resolve()
             app.open_file_with()
