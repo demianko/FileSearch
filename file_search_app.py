@@ -21,7 +21,7 @@ from metadata_extractor import MetadataExtractor
 from query_matcher import QueryMatcher
 from query_parser import QueryParser
 from search_rule import SearchRule
-from windows_drag_drop import normalize_drag_path, start_drag
+from windows_drag_drop import copy_files_to_clipboard, normalize_drag_path, start_drag
 
 
 # Configure CustomTkinter Appearance
@@ -520,8 +520,9 @@ class FileSearchApp(ctk.CTk):
         # Keyboard shortcuts on treeview
         self.tree.bind("<Control-a>", lambda e: (self._select_all_results(), "break"))
         self.tree.bind("<Control-A>", lambda e: (self._select_all_results(), "break"))
-        self.tree.bind("<Control-c>", lambda e: (self._ctx_copy_path(), "break"))
-        self.tree.bind("<Control-C>", lambda e: (self._ctx_copy_path(), "break"))
+        self.tree.bind("<Control-c>", lambda e: (self.copy_selected_items(), "break"))
+        self.tree.bind("<Control-C>", lambda e: (self.copy_selected_items(), "break"))
+        self.tree.bind("<F2>", lambda e: (self.rename_selected_item(), "break"))
 
         # Attach context menus to all entry input fields
         for entry_widget in (
@@ -618,7 +619,10 @@ class FileSearchApp(ctk.CTk):
                     self.context_menu.add_command(label="🎨 Open File With...", command=self.open_file_with)
                 self.context_menu.add_command(label="📁 Open in Explorer", command=self._ctx_open_explorer)
                 self.context_menu.add_separator()
-                self.context_menu.add_command(label="📋 Copy Full Path", accelerator="Ctrl+C", command=self._ctx_copy_path)
+                self.context_menu.add_command(label="📄 Copy", accelerator="Ctrl+C", command=self.copy_selected_items)
+                self.context_menu.add_command(label="✏️ Rename", accelerator="F2", command=self.rename_selected_item)
+                self.context_menu.add_separator()
+                self.context_menu.add_command(label="📋 Copy Full Path", command=self._ctx_copy_path)
                 self.context_menu.add_command(label="📄 Copy Name", command=self._ctx_copy_name)
                 self.context_menu.add_command(label="📂 Copy Folder Path", command=self._ctx_copy_folder)
             else:
@@ -626,7 +630,9 @@ class FileSearchApp(ctk.CTk):
                 self.context_menu.add_command(label="🎨 Open File With...", command=self.open_file_with)
                 self.context_menu.add_command(label="📁 Open Containing Folder in Explorer", command=self._ctx_open_explorer)
                 self.context_menu.add_separator()
-                self.context_menu.add_command(label=f"📋 Copy Full Paths ({count} files)", accelerator="Ctrl+C", command=self._ctx_copy_path)
+                self.context_menu.add_command(label=f"📄 Copy ({count} items)", accelerator="Ctrl+C", command=self.copy_selected_items)
+                self.context_menu.add_separator()
+                self.context_menu.add_command(label=f"📋 Copy Full Paths ({count} files)", command=self._ctx_copy_path)
                 self.context_menu.add_command(label=f"📄 Copy File Names ({count} files)", command=self._ctx_copy_name)
                 self.context_menu.add_command(label="📂 Copy Folder Paths", command=self._ctx_copy_folder)
 
@@ -965,6 +971,157 @@ class FileSearchApp(ctk.CTk):
             unique_folders = list(dict.fromkeys(folders))
             self.clipboard_clear()
             self.clipboard_append("\n".join(unique_folders))
+
+    def copy_selected_items(self, event=None):
+        """Copies selected files and/or folders to the Windows clipboard (CF_HDROP + CF_UNICODETEXT)."""
+        sel = self.tree.selection()
+        if not sel:
+            return "break"
+        paths = [self.results_map[iid].path for iid in sel if iid in self.results_map]
+        if not paths:
+            return "break"
+
+        success = copy_files_to_clipboard(paths)
+        if not success:
+            text = "\n".join(str(p) for p in paths)
+            self.clipboard_clear()
+            self.clipboard_append(text)
+
+        count = len(paths)
+        label = "item" if count == 1 else "items"
+        self.lbl_status.configure(text=f"Copied {count} {label} to clipboard (Ctrl+V to paste in Explorer)")
+        return "break"
+
+    def rename_selected_item(self, event=None):
+        """Opens a modal dialog to rename the selected file or folder, updating the UI and left tree."""
+        sel = self.tree.selection()
+        if not sel:
+            return "break"
+        item_id = sel[0]
+        if item_id not in self.results_map:
+            return "break"
+
+        file_item = self.results_map[item_id]
+        old_path = file_item.path
+        if not old_path.exists():
+            messagebox.showerror("Rename Error", f"The item no longer exists:\n{old_path}")
+            return "break"
+
+        old_name = old_path.name
+        is_dir = file_item.is_directory
+
+        # Create modern rename modal dialog
+        dialog = ctk.CTkToplevel(self)
+        dialog.title(f"Rename {'Folder' if is_dir else 'File'}")
+        dialog.geometry("460x170")
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        dialog.grab_set()
+
+        # Center dialog over main window
+        self.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - 460) // 2
+        y = self.winfo_y() + (self.winfo_height() - 170) // 2
+        dialog.geometry(f"+{max(0, x)}+{max(0, y)}")
+
+        lbl = ctk.CTkLabel(
+            dialog,
+            text=f"Enter new name for {'folder' if is_dir else 'file'}:",
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold")
+        )
+        lbl.pack(padx=20, pady=(16, 8), anchor="w")
+
+        name_var = tk.StringVar(value=old_name)
+        entry = ctk.CTkEntry(dialog, textvariable=name_var, width=420, height=34)
+        entry.pack(padx=20, pady=(0, 14))
+        entry.focus_set()
+
+        # Pre-select filename excluding extension (for files)
+        if not is_dir and "." in old_name:
+            ext_idx = old_name.rfind(".")
+            if ext_idx > 0:
+                entry._entry.select_range(0, ext_idx)
+                entry._entry.icursor(ext_idx)
+        else:
+            entry._entry.select_range(0, "end")
+
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(padx=20, pady=(0, 14), fill="x")
+
+        def do_rename():
+            new_name = name_var.get().strip()
+            if not new_name or new_name == old_name:
+                dialog.destroy()
+                return
+
+            # Check invalid characters
+            invalid_chars = r'\/:*?"<>|'
+            if any(c in new_name for c in invalid_chars):
+                messagebox.showerror(
+                    "Invalid Name",
+                    f"A name cannot contain any of the following characters:\n{invalid_chars}",
+                    parent=dialog
+                )
+                return
+
+            new_path = old_path.with_name(new_name)
+            if new_path.exists():
+                messagebox.showerror(
+                    "Already Exists",
+                    f"An item with the name '{new_name}' already exists in this folder.",
+                    parent=dialog
+                )
+                return
+
+            try:
+                os.rename(old_path, new_path)
+            except Exception as e:
+                messagebox.showerror("Rename Error", f"Could not rename:\n{e}", parent=dialog)
+                return
+
+            # Update FileItem model
+            file_item.path = new_path
+            if is_dir:
+                file_item.publisher = "Folder"
+            else:
+                file_item.publisher = self.search_engine.metadata_extractor.extract_publisher(new_name)
+                file_item.year = self.search_engine.metadata_extractor.extract_year(new_name)
+
+            # Update Treeview row
+            self.tree.item(
+                item_id,
+                values=(file_item.name_display, file_item.publisher_display, file_item.year_display, file_item.date_modified_str, file_item.parent_str)
+            )
+
+            # If the renamed item is a folder, update directory path and refresh left tree
+            if is_dir:
+                if os.path.normpath(self.folder_path.get()).lower() == os.path.normpath(str(old_path)).lower():
+                    self.folder_path.set(str(new_path))
+                    self.save_current_config()
+                self.explorer_nav.refresh()
+
+            self.lbl_status.configure(text=f"Renamed '{old_name}' to '{new_name}'")
+            dialog.destroy()
+
+        btn_cancel = ctk.CTkButton(
+            btn_frame, text="Cancel", width=90, height=32,
+            fg_color="#3a3a3a", hover_color="#4a4a4a",
+            command=dialog.destroy
+        )
+        btn_cancel.pack(side="right", padx=(8, 0))
+
+        btn_ok = ctk.CTkButton(
+            btn_frame, text="Rename", width=100, height=32,
+            fg_color="#1f6aa5", hover_color="#144870",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            command=do_rename
+        )
+        btn_ok.pack(side="right")
+
+        dialog.bind("<Return>", lambda e: do_rename())
+        dialog.bind("<KP_Enter>", lambda e: do_rename())
+        dialog.bind("<Escape>", lambda e: dialog.destroy())
+        return "break"
 
 
 if __name__ == "__main__":

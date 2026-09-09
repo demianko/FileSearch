@@ -214,6 +214,20 @@ class TestFileSearchApp(unittest.TestCase):
             app.open_file()
             app._on_nav_folder_selected.assert_called_with(str(subdir))
 
+    def test_copy_selected_items(self):
+        app = FileSearchApp.__new__(FileSearchApp)
+        app.tree = MagicMock()
+        app.lbl_status = MagicMock()
+        item1 = FileItem(path=Path("dir/file1.pdf"), year=2024, publisher="packt", modified=100.0)
+        app.results_map = {"1": item1}
+        app.tree.selection.return_value = ("1",)
+
+        with patch("file_search_app.copy_files_to_clipboard", return_value=True) as mock_copy:
+            res = app.copy_selected_items()
+            self.assertEqual(res, "break")
+            mock_copy.assert_called_once_with([Path("dir/file1.pdf")])
+            app.lbl_status.configure.assert_called()
+
 
 if __name__ == "__main__":
     unittest.main()

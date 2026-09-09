@@ -28,11 +28,13 @@ A modern, fast, and responsive Desktop File Search & Sort utility built with **C
 - 🏢 **Publisher & Year Detection**: Automatically detects recognized publishers (O'Reilly, Manning, Wiley, Packt, etc.) and release years from file names.
 - 📊 **Multi-Criteria Sorting**: Sort by **Published Year**, **Publisher**, **Date Modified**, **Size**, or **File Name**.
 - 🎯 **Live Filter Box**: Instant in-memory filtering of search results with wildcard support.
-- 🖱️ **Windows Integration & Drag and Drop**:
+- 🖱️ **Windows Integration & Explorer Actions**:
+  - **Copy Files/Folders (<kbd>Ctrl+C</kbd>)**: Select any file, folder, or multiple items and press <kbd>Ctrl+C</kbd> or choose **"📄 Copy"** from the context menu. Places the actual items onto the Windows clipboard (`CF_HDROP`) so you can paste them into Windows Explorer or Desktop with <kbd>Ctrl+V</kbd>, as well as pasting paths into text editors (`CF_UNICODETEXT`).
+  - **Rename Files/Folders (<kbd>F2</kbd>)**: Select any file or folder and press <kbd>F2</kbd> or choose **"✏️ Rename"** from the context menu to open a sleek rename dialog. Pre-selects filename (excluding extension for files), validates against invalid Windows characters and collisions, and refreshes both the table and the left navigation tree.
   - **Universal Drag & Drop**: Click and drag any single file or multiple selected files directly from the search results table into Windows Explorer, Desktop, browser upload areas, VS Code, or any other application.
   - **GOM Player & Media Player Support**: Built-in native `WM_DROPFILES` bridge with full UTF-16 Unicode support, preventing file-not-found errors or Mojibake when dragging files with Korean characters or Roman numerals (`Ⅲ`) into GOM Player.
-  - **Double-Click**: Open the file in its default system viewer.
-  - **Right-Click Context Menu**: **Open File**, **Open File With...**, **Open Containing Folder in Explorer** (with file pre-selected), **Copy Full Path**, **Copy File Name**, **Copy Folder Path**, and **Select All**.
+  - **Double-Click & Enter**: Open file or navigate into folder.
+  - **Right-Click Context Menu**: **Open File / Open Folder**, **Open File With...**, **Open in Explorer**, **Copy** (<kbd>Ctrl+C</kbd>), **Rename** (<kbd>F2</kbd>), **Copy Full Path**, **Copy Name**, **Copy Folder Path**, and **Select All** (<kbd>Ctrl+A</kbd>).
 - 💾 **Persistent User Configuration**: Automatically saves the user's last-used folder, search patterns, extensions, sort order, publisher filters, limit, and live filter query in `~/.filesearch/config` and reloads them on application launch.
 - 🎨 **Modern 2026 Dark UI**: Sleek aesthetic with rounded cards, Segoe UI typography, and responsive controls.
 

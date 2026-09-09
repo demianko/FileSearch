@@ -150,6 +150,14 @@ if IS_WINDOWS:
     user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
     user32.PostMessageW.restype = wintypes.BOOL
     user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    user32.OpenClipboard.restype = wintypes.BOOL
+    user32.OpenClipboard.argtypes = [wintypes.HWND]
+    user32.EmptyClipboard.restype = wintypes.BOOL
+    user32.EmptyClipboard.argtypes = []
+    user32.SetClipboardData.restype = wintypes.HANDLE
+    user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    user32.CloseClipboard.restype = wintypes.BOOL
+    user32.CloseClipboard.argtypes = []
 
     class DROPFILES(Structure):
         _fields_ = [
@@ -684,3 +692,49 @@ def start_drag(file_paths: Sequence[FilePathType]) -> int:
         return int(dw_effect.value)
     except Exception:
         return 0
+
+
+def copy_files_to_clipboard(file_paths: Sequence[FilePathType]) -> bool:
+    """Places files and/or folders onto the Windows clipboard in CF_HDROP and CF_UNICODETEXT formats.
+
+    Allows pasting directly into Windows Explorer, Desktop, or other applications with Ctrl+V,
+    as well as pasting file paths as text into text editors and terminals.
+
+    Args:
+        file_paths: Sequence of file path strings or Path objects.
+
+    Returns:
+        bool: True if files were successfully placed on clipboard, False otherwise.
+    """
+    if not IS_WINDOWS or not file_paths:
+        return False
+
+    valid_paths: List[str] = []
+    for fp in file_paths:
+        norm_p = normalize_drag_path(fp)
+        if norm_p and os.path.exists(norm_p):
+            valid_paths.append(norm_p)
+
+    if not valid_paths:
+        return False
+
+    if not user32.OpenClipboard(0):
+        return False
+
+    try:
+        user32.EmptyClipboard()
+
+        # 1. CF_HDROP (15) for Explorer / Desktop file pasting
+        h_drop = _create_hdrop_buffer(valid_paths)
+        user32.SetClipboardData(CF_HDROP, h_drop)
+
+        # 2. CF_UNICODETEXT (13) for text editors / terminals
+        h_text = _create_unicodetext_buffer(valid_paths)
+        user32.SetClipboardData(CF_UNICODETEXT, h_text)
+
+        return True
+    except Exception:
+        return False
+    finally:
+        user32.CloseClipboard()
+

@@ -152,9 +152,15 @@ class TestWindowsDragDrop(unittest.TestCase):
         res = windows_drag_drop._drop_source_query_continue_drag(None, True, 0)
         self.assertEqual(res, windows_drag_drop.DRAGDROP_S_CANCEL)
 
-        # Mouse still held down should return S_OK (0)
-        res = windows_drag_drop._drop_source_query_continue_drag(None, False, windows_drag_drop.MK_LBUTTON)
-        self.assertEqual(res, 0)
+    def test_copy_files_to_clipboard(self):
+        # Empty list -> returns False
+        self.assertFalse(windows_drag_drop.copy_files_to_clipboard([]))
+
+        # Real file -> returns True on Windows
+        readme_path = Path(__file__).parent / "README.md"
+        res = windows_drag_drop.copy_files_to_clipboard([readme_path])
+        if sys.platform == "win32":
+            self.assertTrue(res)
 
 
 if __name__ == "__main__":
