@@ -23,6 +23,7 @@ from metadata_extractor import MetadataExtractor
 from query_matcher import QueryMatcher
 from query_parser import QueryParser
 from search_rule import SearchRule
+from windows_drag_drop import start_drag
 
 __all__ = [
     "AppConfig",
@@ -35,6 +36,7 @@ __all__ = [
     "MetadataExtractor",
     "FileSearchEngine",
     "FileSearchApp",
+    "start_drag",
 ]
 
 

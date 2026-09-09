@@ -20,6 +20,7 @@ from metadata_extractor import MetadataExtractor
 from query_matcher import QueryMatcher
 from query_parser import QueryParser
 from search_rule import SearchRule
+from windows_drag_drop import start_drag
 
 
 # Configure CustomTkinter Appearance
@@ -77,6 +78,12 @@ class FileSearchApp(ctk.CTk):
         self.sort_reverse = False
         self.is_searching = False
         self.cancel_search = False
+
+        # Drag State Tracking
+        self._drag_start_x = 0
+        self._drag_start_y = 0
+        self._drag_pending = False
+        self._drag_item_clicked: Optional[str] = None
 
         self._create_widgets()
         self._setup_context_menu()
@@ -340,6 +347,62 @@ class FileSearchApp(ctk.CTk):
         # Bindings
         self.tree.bind("<Double-1>", self.open_file)
         self.tree.bind("<Configure>", self._on_tree_resize)
+        self.tree.bind("<ButtonPress-1>", self._on_tree_press)
+        self.tree.bind("<B1-Motion>", self._on_tree_motion)
+        self.tree.bind("<ButtonRelease-1>", self._on_tree_release)
+
+    def _on_tree_press(self, event):
+        """Records initial mouse coordinates and manages selection for drag vs click."""
+        self._drag_start_x = event.x
+        self._drag_start_y = event.y
+        row_id = self.tree.identify_row(event.y)
+        if not row_id:
+            self._drag_pending = False
+            self._drag_item_clicked = None
+            return
+
+        self._drag_pending = True
+        self._drag_item_clicked = row_id
+        current_selection = self.tree.selection()
+
+        has_modifier = bool(event.state & (0x0001 | 0x0004))  # Shift (0x1) or Ctrl (0x4)
+        if not has_modifier:
+            if row_id in current_selection and len(current_selection) > 1:
+                # Retain multi-selection so user can drag all selected items
+                return "break"
+            elif row_id not in current_selection:
+                self.tree.selection_set(row_id)
+
+    def _on_tree_motion(self, event):
+        """Initiates native Windows OLE file drag when mouse moves beyond threshold."""
+        if not self._drag_pending:
+            return
+        dx = abs(event.x - self._drag_start_x)
+        dy = abs(event.y - self._drag_start_y)
+        if dx > 5 or dy > 5:
+            self._drag_pending = False
+            sel = self.tree.selection()
+            if not sel and self._drag_item_clicked:
+                sel = (self._drag_item_clicked,)
+
+            file_paths = [
+                self.results_map[item_id].path
+                for item_id in sel
+                if item_id in self.results_map
+            ]
+            if file_paths:
+                start_drag(file_paths)
+
+    def _on_tree_release(self, event):
+        """Handles mouse release, resolving single selection when multi-selection click wasn't dragged."""
+        if self._drag_pending and self._drag_item_clicked:
+            has_modifier = bool(event.state & (0x0001 | 0x0004))
+            if not has_modifier:
+                current_selection = self.tree.selection()
+                if len(current_selection) > 1 and self._drag_item_clicked in current_selection:
+                    self.tree.selection_set(self._drag_item_clicked)
+        self._drag_pending = False
+        self._drag_item_clicked = None
 
     def _on_tree_resize(self, event):
         total_w = event.width - 20
@@ -375,21 +438,149 @@ class FileSearchApp(ctk.CTk):
         self.lbl_count.grid(row=0, column=1, sticky="e")
 
     def _setup_context_menu(self):
-        self.context_menu = tk.Menu(self, tearoff=0, bg="#2b2b2b", fg="#ffffff", activebackground="#1f6aa5")
-        self.context_menu.add_command(label="Open File", command=self.open_file)
-        self.context_menu.add_command(label="Open Containing Folder in Explorer", command=self._ctx_open_explorer)
-        self.context_menu.add_separator()
-        self.context_menu.add_command(label="Copy Full Path", command=self._ctx_copy_path)
-        self.context_menu.add_command(label="Copy File Name", command=self._ctx_copy_name)
+        """Initializes context menus for search results table and input entry fields."""
+        # 1. Search Results Context Menu (Row Selection)
+        self.context_menu = tk.Menu(
+            self, tearoff=0,
+            bg="#2b2b2b", fg="#ffffff",
+            activebackground="#1f6aa5", activeforeground="#ffffff",
+            font=("Segoe UI", 10), relief="flat", bd=1
+        )
+
+        # 2. Search Results Context Menu (Empty Area)
+        self.empty_context_menu = tk.Menu(
+            self, tearoff=0,
+            bg="#2b2b2b", fg="#ffffff",
+            activebackground="#1f6aa5", activeforeground="#ffffff",
+            font=("Segoe UI", 10), relief="flat", bd=1
+        )
+        self.empty_context_menu.add_command(label="⚡ Search / Refresh", accelerator="Enter", command=self.search_files)
+        self.empty_context_menu.add_separator()
+        self.empty_context_menu.add_command(label="Select All", accelerator="Ctrl+A", command=self._select_all_results)
+        self.empty_context_menu.add_command(label="🔄 Reset / Clear", command=self.reset)
 
         self.tree.bind("<Button-3>", self._show_context_menu)
 
+        # Keyboard shortcuts on treeview
+        self.tree.bind("<Control-a>", lambda e: (self._select_all_results(), "break"))
+        self.tree.bind("<Control-A>", lambda e: (self._select_all_results(), "break"))
+        self.tree.bind("<Control-c>", lambda e: (self._ctx_copy_path(), "break"))
+        self.tree.bind("<Control-C>", lambda e: (self._ctx_copy_path(), "break"))
+
+        # Attach context menus to all entry input fields
+        for entry_widget in (
+            getattr(self, "entry_folder", None),
+            getattr(self, "entry_patterns", None),
+            getattr(self, "entry_extensions", None),
+            getattr(self, "entry_sort", None),
+            getattr(self, "entry_publisher", None),
+            getattr(self, "entry_limit", None),
+            getattr(self, "filter_entry", None),
+        ):
+            if entry_widget is not None:
+                self._attach_entry_context_menu(entry_widget)
+
+    def _attach_entry_context_menu(self, ctk_entry: ctk.CTkEntry):
+        """Attaches a modern dark context menu (Cut, Copy, Paste, Select All, Clear) to a CTkEntry."""
+        menu = tk.Menu(
+            self, tearoff=0,
+            bg="#2b2b2b", fg="#ffffff",
+            activebackground="#1f6aa5", activeforeground="#ffffff",
+            font=("Segoe UI", 10), relief="flat", bd=1
+        )
+
+        def show_menu(event):
+            menu.delete(0, "end")
+            inner = getattr(ctk_entry, "_entry", None)
+            if inner is None:
+                return
+
+            has_selection = False
+            try:
+                has_selection = bool(inner.select_present())
+            except Exception:
+                pass
+
+            has_text = bool(ctk_entry.get())
+
+            clipboard_has_text = False
+            try:
+                clipboard_has_text = bool(self.clipboard_get())
+            except Exception:
+                pass
+
+            menu.add_command(
+                label="Cut", accelerator="Ctrl+X",
+                state="normal" if has_selection else "disabled",
+                command=lambda: inner.event_generate("<<Cut>>")
+            )
+            menu.add_command(
+                label="Copy", accelerator="Ctrl+C",
+                state="normal" if has_selection else "disabled",
+                command=lambda: inner.event_generate("<<Copy>>")
+            )
+            menu.add_command(
+                label="Paste", accelerator="Ctrl+V",
+                state="normal" if clipboard_has_text else "disabled",
+                command=lambda: inner.event_generate("<<Paste>>")
+            )
+            menu.add_separator()
+            menu.add_command(
+                label="Select All", accelerator="Ctrl+A",
+                state="normal" if has_text else "disabled",
+                command=lambda: (inner.select_range(0, "end"), inner.icursor("end"))
+            )
+            menu.add_command(
+                label="Clear",
+                state="normal" if has_text else "disabled",
+                command=lambda: (ctk_entry.delete(0, "end"), inner.event_generate("<KeyRelease>"))
+            )
+            menu.post(event.x_root, event.y_root)
+
+        ctk_entry.bind("<Button-3>", show_menu)
+        if hasattr(ctk_entry, "_entry"):
+            ctk_entry._entry.bind("<Button-3>", show_menu)
+
     def _show_context_menu(self, event):
+        """Displays context menu for selected items or for the empty results area."""
         row_id = self.tree.identify_row(event.y)
         if row_id:
-            if row_id not in self.tree.selection():
+            current_selection = self.tree.selection()
+            if row_id not in current_selection:
                 self.tree.selection_set(row_id)
+                current_selection = (row_id,)
+
+            count = len(current_selection)
+            self.context_menu.delete(0, "end")
+
+            if count == 1:
+                self.context_menu.add_command(label="▶ Open File", accelerator="Double-Click", command=self.open_file)
+                self.context_menu.add_command(label="🎨 Open File With...", command=self.open_file_with)
+                self.context_menu.add_command(label="📁 Open Containing Folder in Explorer", command=self._ctx_open_explorer)
+                self.context_menu.add_separator()
+                self.context_menu.add_command(label="📋 Copy Full Path", accelerator="Ctrl+C", command=self._ctx_copy_path)
+                self.context_menu.add_command(label="📄 Copy File Name", command=self._ctx_copy_name)
+                self.context_menu.add_command(label="📂 Copy Folder Path", command=self._ctx_copy_folder)
+            else:
+                self.context_menu.add_command(label=f"▶ Open {count} Files", command=self.open_file)
+                self.context_menu.add_command(label="🎨 Open File With...", command=self.open_file_with)
+                self.context_menu.add_command(label="📁 Open Containing Folder in Explorer", command=self._ctx_open_explorer)
+                self.context_menu.add_separator()
+                self.context_menu.add_command(label=f"📋 Copy Full Paths ({count} files)", accelerator="Ctrl+C", command=self._ctx_copy_path)
+                self.context_menu.add_command(label=f"📄 Copy File Names ({count} files)", command=self._ctx_copy_name)
+                self.context_menu.add_command(label="📂 Copy Folder Paths", command=self._ctx_copy_folder)
+
+            self.context_menu.add_separator()
+            self.context_menu.add_command(label="Select All", accelerator="Ctrl+A", command=self._select_all_results)
             self.context_menu.post(event.x_root, event.y_root)
+        else:
+            self.empty_context_menu.post(event.x_root, event.y_root)
+
+    def _select_all_results(self, event=None):
+        """Selects all items currently displayed in the results table."""
+        children = self.tree.get_children()
+        if children:
+            self.tree.selection_set(children)
 
     def select_folder(self):
         folder = filedialog.askdirectory(initialdir=self.folder_path.get())
@@ -581,17 +772,56 @@ class FileSearchApp(ctk.CTk):
         sel = self.tree.selection()
         if not sel:
             return
+        for item_id in sel:
+            if item_id in self.results_map:
+                file_item = self.results_map[item_id]
+                if file_item.path.exists():
+                    try:
+                        if sys.platform == "win32":
+                            os.startfile(str(file_item.path))
+                        else:
+                            webbrowser.open(file_item.path.as_uri())
+                    except Exception as e:
+                        messagebox.showerror("Open File Error", f"Could not open file:\n{e}")
+                else:
+                    messagebox.showerror("File Not Found", f"File does not exist:\n{file_item.path}")
+
+    def open_file_with(self, event=None):
+        """Opens the native Windows 'Open with...' dialog for the selected file."""
+        sel = self.tree.selection()
+        if not sel:
+            return
         item_id = sel[0]
         if item_id in self.results_map:
             file_item = self.results_map[item_id]
             if file_item.path.exists():
                 try:
                     if sys.platform == "win32":
-                        os.startfile(str(file_item.path))
+                        resolved_path = os.path.normpath(str(file_item.path.resolve()))
+                        try:
+                            import ctypes
+                            from ctypes import Structure, POINTER, byref, wintypes, HRESULT
+
+                            class OPENASINFO(Structure):
+                                _fields_ = [
+                                    ("pcszFile", wintypes.LPCWSTR),
+                                    ("pcszClass", wintypes.LPCWSTR),
+                                    ("oaifInFlags", wintypes.DWORD),
+                                ]
+
+                            shell32 = ctypes.windll.shell32
+                            shell32.SHOpenWithDialog.restype = HRESULT
+                            shell32.SHOpenWithDialog.argtypes = [wintypes.HWND, POINTER(OPENASINFO)]
+                            info = OPENASINFO(resolved_path, None, 0x00000004 | 0x00000001)  # OAIF_EXEC | OAIF_ALLOW_REGISTRATION
+                            hr = shell32.SHOpenWithDialog(0, byref(info))
+                            if hr != 0:
+                                subprocess.Popen(["rundll32.exe", "shell32.dll,OpenAs_RunDLL", resolved_path])
+                        except Exception:
+                            subprocess.Popen(["rundll32.exe", "shell32.dll,OpenAs_RunDLL", resolved_path])
                     else:
                         webbrowser.open(file_item.path.as_uri())
                 except Exception as e:
-                    messagebox.showerror("Open File Error", f"Could not open file:\n{e}")
+                    messagebox.showerror("Open With Error", f"Could not open 'Open with' dialog:\n{e}")
             else:
                 messagebox.showerror("File Not Found", f"File does not exist:\n{file_item.path}")
 
@@ -624,6 +854,14 @@ class FileSearchApp(ctk.CTk):
         if names:
             self.clipboard_clear()
             self.clipboard_append("\n".join(names))
+
+    def _ctx_copy_folder(self):
+        sel = self.tree.selection()
+        folders = [str(self.results_map[iid].path.parent) for iid in sel if iid in self.results_map]
+        if folders:
+            unique_folders = list(dict.fromkeys(folders))
+            self.clipboard_clear()
+            self.clipboard_append("\n".join(unique_folders))
 
 
 if __name__ == "__main__":

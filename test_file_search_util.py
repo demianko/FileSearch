@@ -23,6 +23,7 @@ from test_metadata_extractor import TestMetadataExtractor
 from test_query_matcher import TestQueryMatcher
 from test_query_parser import TestQueryParser
 from test_search_rule import TestSearchRule
+from test_windows_drag_drop import TestWindowsDragDrop
 
 __all__ = [
     "TestAppConfig",
@@ -34,6 +35,7 @@ __all__ = [
     "TestMetadataExtractor",
     "TestFileSearchEngine",
     "TestFileSearchApp",
+    "TestWindowsDragDrop",
 ]
 
 

@@ -23,9 +23,10 @@ A modern, fast, and responsive Desktop File Search & Sort utility built with **C
 - 📊 **Multi-Criteria Sorting**: Sort by **Published Year**, **Publisher**, **Date Modified**, **Size**, or **File Name**.
 - 📐 **Optimized Layout**: Proportional table layout with 65% width allocated to File Name for optimal readability.
 - 🎯 **Live Filter Box**: Instant in-memory filtering of search results with wildcard support.
-- 🖱️ **Windows Integration**:
-  - Double-click any row to open the file in its default system viewer.
-  - Right-click context menu: **Open File**, **Open Containing Folder in Explorer** (with file selected), **Copy Full Path**, **Copy File Name**.
+- 🖱️ **Windows Integration & Drag and Drop**:
+  - **Drag & Drop**: Click and drag any single file or multiple selected files directly from the search results table and drop them into Windows Explorer, Desktop, browser upload areas, VS Code, or any other application.
+  - **Double-Click**: Open the file in its default system viewer.
+  - **Right-Click Context Menu**: **Open File**, **Open Containing Folder in Explorer** (with file selected), **Copy Full Path**, **Copy File Name**.
 - 💾 **Persistent User Configuration**: Automatically saves the user's last-used folder, search patterns, extensions, sort order, publisher filters, limit, and live filter query in `~/.filesearch/config` and reloads them on application launch.
 - 🎨 **Modern 2026 Dark UI**: Sleek aesthetic with rounded cards, Segoe UI typography, and responsive controls.
 
@@ -105,6 +106,7 @@ The codebase follows the **Single Responsibility Principle (SRP)** with modular 
 | [`file_item.py`](file:///d:/AProjects/non.work/file.search/file_item.py) | [`test_file_item.py`](file:///d:/AProjects/non.work/file.search/test_file_item.py) | Discovered file domain data model |
 | [`metadata_extractor.py`](file:///d:/AProjects/non.work/file.search/metadata_extractor.py) | [`test_metadata_extractor.py`](file:///d:/AProjects/non.work/file.search/test_metadata_extractor.py) | Extraction of publication year & publisher |
 | [`file_search_engine.py`](file:///d:/AProjects/non.work/file.search/file_search_engine.py) | [`test_file_search_engine.py`](file:///d:/AProjects/non.work/file.search/test_file_search_engine.py) | Directory scanning (new-to-old) & search engine |
+| [`windows_drag_drop.py`](file:///d:/AProjects/non.work/file.search/windows_drag_drop.py) | [`test_windows_drag_drop.py`](file:///d:/AProjects/non.work/file.search/test_windows_drag_drop.py) | Native Windows OLE drag-and-drop integration (`ctypes`) |
 | [`file_search_app.py`](file:///d:/AProjects/non.work/file.search/file_search_app.py) | [`test_file_search_app.py`](file:///d:/AProjects/non.work/file.search/test_file_search_app.py) | CustomTkinter GUI presentation layer |
 | [`FileSearchUtil.py`](file:///d:/AProjects/non.work/file.search/FileSearchUtil.py) | [`test_file_search_util.py`](file:///d:/AProjects/non.work/file.search/test_file_search_util.py) | Application entrypoint & master test suite |
 
