@@ -2,6 +2,8 @@
 
 A modern, fast, and responsive Desktop File Search & Sort utility built with **CustomTkinter** and **Python 3.13**.
 
+📖 **[Read the Full User Manual](USER_MANUAL.md)** for a complete end-user guide with step-by-step instructions, keyboard shortcuts, query examples, and troubleshooting tips.
+
 ---
 
 ## Features

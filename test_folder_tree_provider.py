@@ -72,5 +72,23 @@ class TestFolderTreeProvider(unittest.TestCase):
             self.assertEqual(dirs[0][0], "RealFolder")
 
 
+class TestFileExplorerNavCallbacks(unittest.TestCase):
+    """Tests for FileExplorerNav callback triggering."""
+
+    def test_on_f2_triggers_rename_callback(self):
+        from file_explorer_nav import FileExplorerNav
+
+        nav = FileExplorerNav.__new__(FileExplorerNav)
+        nav.tree = MagicMock()
+        nav.tree.selection.return_value = ("node_1",)
+        nav.node_path_map = {"node_1": "D:\\MyDir\\SubDir"}
+        mock_rename = MagicMock()
+        nav.on_rename_callback = mock_rename
+
+        res = nav._on_f2()
+        self.assertEqual(res, "break")
+        mock_rename.assert_called_once_with("D:\\MyDir\\SubDir")
+
+
 if __name__ == "__main__":
     unittest.main()

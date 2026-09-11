@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import ctypes
 import subprocess
 import sys
 import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 import webbrowser
 
 import customtkinter as ctk
@@ -134,6 +135,7 @@ class FileSearchApp(ctk.CTk):
             self.paned_window,
             width=280,
             on_select_callback=self._on_nav_folder_selected,
+            on_rename_callback=self._on_nav_folder_rename,
         )
 
         # Right Panel: Workspace Container holding Controls, Filter, Results Table & Footer
@@ -408,6 +410,7 @@ class FileSearchApp(ctk.CTk):
 
     def _on_tree_press(self, event):
         """Records initial mouse coordinates and manages selection for drag vs click."""
+        self.tree.focus_set()
         self._drag_start_x = event.x
         self._drag_start_y = event.y
         row_id = self.tree.identify_row(event.y)
@@ -517,7 +520,8 @@ class FileSearchApp(ctk.CTk):
 
         self.tree.bind("<Button-3>", self._show_context_menu)
 
-        # Keyboard shortcuts on treeview
+        # Keyboard shortcuts on treeview and window
+        self.bind("<F2>", lambda e: self.rename_selected_item())
         self.tree.bind("<Control-a>", lambda e: (self._select_all_results(), "break"))
         self.tree.bind("<Control-A>", lambda e: (self._select_all_results(), "break"))
         self.tree.bind("<Control-c>", lambda e: (self.copy_selected_items(), "break"))
@@ -600,6 +604,7 @@ class FileSearchApp(ctk.CTk):
 
     def _show_context_menu(self, event):
         """Displays context menu for selected items or for the empty results area."""
+        self.tree.focus_set()
         row_id = self.tree.identify_row(event.y)
         if row_id:
             current_selection = self.tree.selection()
@@ -993,75 +998,169 @@ class FileSearchApp(ctk.CTk):
         return "break"
 
     def rename_selected_item(self, event=None):
-        """Opens a modal dialog to rename the selected file or folder, updating the UI and left tree."""
+        """Opens a modal dialog to rename the selected file or folder in results or navigation tree."""
         sel = self.tree.selection()
-        if not sel:
-            return "break"
-        item_id = sel[0]
-        if item_id not in self.results_map:
-            return "break"
+        if sel:
+            item_id = sel[0]
+            if item_id in self.results_map:
+                file_item = self.results_map[item_id]
+                old_path = file_item.path
+                if not old_path.exists():
+                    messagebox.showerror("Rename Error", f"The item no longer exists:\n{old_path}", parent=self)
+                    return "break"
 
-        file_item = self.results_map[item_id]
-        old_path = file_item.path
+                is_dir = file_item.is_directory
+
+                def on_success(old_p: Path, new_p: Path):
+                    new_name = new_p.name
+                    file_item.path = new_p
+                    if is_dir:
+                        file_item.publisher = "Folder"
+                        file_item.year = 0
+                    else:
+                        file_item.publisher = self.search_engine.metadata_extractor.extract_publisher(new_name)
+                        file_item.year = self.search_engine.metadata_extractor.extract_year(new_name)
+
+                    # Update Treeview row
+                    self.tree.item(
+                        item_id,
+                        values=(
+                            file_item.name_display,
+                            file_item.publisher_display,
+                            file_item.year_display,
+                            file_item.date_modified_str,
+                            file_item.parent_str,
+                        )
+                    )
+
+                    # If the renamed item is a folder, update directory path and refresh left tree
+                    if is_dir:
+                        if os.path.normpath(self.folder_path.get()).lower() == os.path.normpath(str(old_p)).lower():
+                            self.folder_path.set(str(new_p))
+                            self.save_current_config()
+                        self.explorer_nav.refresh()
+
+                    self.lbl_status.configure(text=f"Renamed '{old_p.name}' to '{new_name}'")
+
+                self._show_rename_dialog(old_path, is_dir, on_success)
+                return "break"
+
+        # If nothing selected in search results, check left navigation tree
+        if hasattr(self, "explorer_nav"):
+            nav_sel = self.explorer_nav.tree.selection()
+            if nav_sel:
+                folder_path_str = self.explorer_nav.node_path_map.get(nav_sel[0])
+                if folder_path_str:
+                    self._on_nav_folder_rename(folder_path_str)
+                    return "break"
+
+        return "break"
+
+    def _on_nav_folder_rename(self, folder_path_str: str):
+        """Renames a folder selected in the left navigation tree."""
+        old_path = Path(folder_path_str)
+        if len(old_path.parts) <= 1:
+            messagebox.showwarning("Cannot Rename", "Cannot rename a drive root.", parent=self)
+            return
+
         if not old_path.exists():
-            messagebox.showerror("Rename Error", f"The item no longer exists:\n{old_path}")
-            return "break"
+            messagebox.showerror("Rename Error", f"Folder no longer exists:\n{old_path}", parent=self)
+            return
 
+        def on_nav_success(old_p: Path, new_p: Path):
+            if os.path.normpath(self.folder_path.get()).lower() == os.path.normpath(str(old_p)).lower():
+                self.folder_path.set(str(new_p))
+                self.save_current_config()
+                self._on_nav_folder_selected(str(new_p))
+            else:
+                if os.path.normpath(self.folder_path.get()).lower() == os.path.normpath(str(old_p.parent)).lower():
+                    self._on_nav_folder_selected(self.folder_path.get())
+            self.explorer_nav.refresh()
+            self.lbl_status.configure(text=f"Renamed '{old_p.name}' to '{new_p.name}'")
+
+        self._show_rename_dialog(old_path, is_dir=True, on_success=on_nav_success)
+
+    def _show_rename_dialog(self, old_path: Path, is_dir: bool, on_success: Callable[[Path, Path], None]):
+        """Displays a reliable, dark-themed modal dialog to rename a file or folder."""
         old_name = old_path.name
-        is_dir = file_item.is_directory
-
-        # Create modern rename modal dialog
-        dialog = ctk.CTkToplevel(self)
+        dialog = tk.Toplevel(self)
         dialog.title(f"Rename {'Folder' if is_dir else 'File'}")
-        dialog.geometry("460x170")
+        dialog.configure(bg="#242424")
         dialog.resizable(False, False)
         dialog.transient(self)
+        dialog.lift()
+        dialog.attributes("-topmost", True)
         dialog.grab_set()
+
+        # Apply Windows 10/11 dark title bar
+        if sys.platform == "win32":
+            try:
+                hwnd = ctypes.windll.user32.GetParent(dialog.winfo_id()) or dialog.winfo_id()
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(ctypes.c_int(1)), 4)
+            except Exception:
+                pass
 
         # Center dialog over main window
         self.update_idletasks()
-        x = self.winfo_x() + (self.winfo_width() - 460) // 2
-        y = self.winfo_y() + (self.winfo_height() - 170) // 2
-        dialog.geometry(f"+{max(0, x)}+{max(0, y)}")
+        w, h = 460, 160
+        x = max(0, self.winfo_x() + (self.winfo_width() - w) // 2)
+        y = max(0, self.winfo_y() + (self.winfo_height() - h) // 2)
+        dialog.geometry(f"{w}x{h}+{x}+{y}")
 
         lbl = ctk.CTkLabel(
             dialog,
             text=f"Enter new name for {'folder' if is_dir else 'file'}:",
-            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold")
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            text_color="#ffffff",
         )
         lbl.pack(padx=20, pady=(16, 8), anchor="w")
 
         name_var = tk.StringVar(value=old_name)
         entry = ctk.CTkEntry(dialog, textvariable=name_var, width=420, height=34)
         entry.pack(padx=20, pady=(0, 14))
-        entry.focus_set()
 
-        # Pre-select filename excluding extension (for files)
-        if not is_dir and "." in old_name:
-            ext_idx = old_name.rfind(".")
-            if ext_idx > 0:
-                entry._entry.select_range(0, ext_idx)
-                entry._entry.icursor(ext_idx)
-        else:
-            entry._entry.select_range(0, "end")
+        def setup_focus():
+            entry.focus_force()
+            try:
+                entry._entry.config(exportselection=False)
+                if not is_dir and "." in old_name:
+                    ext_idx = old_name.rfind(".")
+                    if ext_idx > 0:
+                        entry._entry.select_range(0, ext_idx)
+                        entry._entry.icursor(ext_idx)
+                    else:
+                        entry._entry.select_range(0, "end")
+                else:
+                    entry._entry.select_range(0, "end")
+            except Exception:
+                pass
+
+        dialog.after(25, setup_focus)
 
         btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
         btn_frame.pack(padx=20, pady=(0, 14), fill="x")
 
+        def close_dialog():
+            try:
+                dialog.grab_release()
+            except Exception:
+                pass
+            dialog.destroy()
+
         def do_rename():
             new_name = name_var.get().strip()
             if not new_name or new_name == old_name:
-                dialog.destroy()
+                close_dialog()
                 return
 
-            # Check invalid characters
             invalid_chars = r'\/:*?"<>|'
             if any(c in new_name for c in invalid_chars):
                 messagebox.showerror(
                     "Invalid Name",
                     f"A name cannot contain any of the following characters:\n{invalid_chars}",
-                    parent=dialog
+                    parent=dialog,
                 )
+                dialog.after(20, setup_focus)
                 return
 
             new_path = old_path.with_name(new_name)
@@ -1069,59 +1168,48 @@ class FileSearchApp(ctk.CTk):
                 messagebox.showerror(
                     "Already Exists",
                     f"An item with the name '{new_name}' already exists in this folder.",
-                    parent=dialog
+                    parent=dialog,
                 )
+                dialog.after(20, setup_focus)
                 return
 
             try:
                 os.rename(old_path, new_path)
             except Exception as e:
                 messagebox.showerror("Rename Error", f"Could not rename:\n{e}", parent=dialog)
+                dialog.after(20, setup_focus)
                 return
 
-            # Update FileItem model
-            file_item.path = new_path
-            if is_dir:
-                file_item.publisher = "Folder"
-            else:
-                file_item.publisher = self.search_engine.metadata_extractor.extract_publisher(new_name)
-                file_item.year = self.search_engine.metadata_extractor.extract_year(new_name)
-
-            # Update Treeview row
-            self.tree.item(
-                item_id,
-                values=(file_item.name_display, file_item.publisher_display, file_item.year_display, file_item.date_modified_str, file_item.parent_str)
-            )
-
-            # If the renamed item is a folder, update directory path and refresh left tree
-            if is_dir:
-                if os.path.normpath(self.folder_path.get()).lower() == os.path.normpath(str(old_path)).lower():
-                    self.folder_path.set(str(new_path))
-                    self.save_current_config()
-                self.explorer_nav.refresh()
-
-            self.lbl_status.configure(text=f"Renamed '{old_name}' to '{new_name}'")
-            dialog.destroy()
+            close_dialog()
+            on_success(old_path, new_path)
 
         btn_cancel = ctk.CTkButton(
-            btn_frame, text="Cancel", width=90, height=32,
-            fg_color="#3a3a3a", hover_color="#4a4a4a",
-            command=dialog.destroy
+            btn_frame,
+            text="Cancel",
+            width=90,
+            height=32,
+            fg_color="#3a3a3a",
+            hover_color="#4a4a4a",
+            command=close_dialog,
         )
         btn_cancel.pack(side="right", padx=(8, 0))
 
         btn_ok = ctk.CTkButton(
-            btn_frame, text="Rename", width=100, height=32,
-            fg_color="#1f6aa5", hover_color="#144870",
+            btn_frame,
+            text="Rename",
+            width=100,
+            height=32,
+            fg_color="#1f6aa5",
+            hover_color="#144870",
             font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
-            command=do_rename
+            command=do_rename,
         )
         btn_ok.pack(side="right")
 
         dialog.bind("<Return>", lambda e: do_rename())
         dialog.bind("<KP_Enter>", lambda e: do_rename())
-        dialog.bind("<Escape>", lambda e: dialog.destroy())
-        return "break"
+        dialog.bind("<Escape>", lambda e: close_dialog())
+        dialog.protocol("WM_DELETE_WINDOW", close_dialog)
 
 
 if __name__ == "__main__":

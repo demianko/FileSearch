@@ -22,10 +22,12 @@ class FileExplorerNav(ctk.CTkFrame):
         self,
         master,
         on_select_callback: Optional[Callable[[str], None]] = None,
+        on_rename_callback: Optional[Callable[[str], None]] = None,
         **kwargs,
     ):
         super().__init__(master, corner_radius=10, border_width=1, border_color="#333333", **kwargs)
         self.on_select_callback = on_select_callback
+        self.on_rename_callback = on_rename_callback
 
         # Mapping of tree item_id -> absolute folder path
         self.node_path_map: Dict[str, str] = {}
@@ -105,9 +107,61 @@ class FileExplorerNav(ctk.CTkFrame):
         vsb.grid(row=0, column=1, sticky="ns")
         hsb.grid(row=1, column=0, sticky="ew")
 
+        # Context menu for navigation tree
+        self.context_menu = tk.Menu(
+            self, tearoff=0,
+            bg="#2b2b2b", fg="#ffffff",
+            activebackground="#1f6aa5", activeforeground="#ffffff",
+            font=("Segoe UI", 10), relief="flat", bd=1
+        )
+        self.context_menu.add_command(label="✏️ Rename", accelerator="F2", command=self._on_f2)
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label="📋 Copy Full Path", command=self._ctx_copy_path)
+        self.context_menu.add_command(label="📁 Open in Explorer", command=self._ctx_open_explorer)
+
         # Bindings
         self.tree.bind("<<TreeviewOpen>>", self._on_tree_open)
         self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
+        self.tree.bind("<Button-3>", self._on_right_click)
+        self.tree.bind("<F2>", self._on_f2)
+
+    def _on_right_click(self, event):
+        """Displays context menu for the clicked folder."""
+        row_id = self.tree.identify_row(event.y)
+        if row_id:
+            self.tree.selection_set(row_id)
+            self.tree.focus_set()
+            folder_path = self.node_path_map.get(row_id)
+            # Only enable rename for folders, not drive roots like C:\
+            is_drive = bool(folder_path and len(Path(folder_path).parts) <= 1)
+            self.context_menu.entryconfigure("✏️ Rename", state="disabled" if is_drive else "normal")
+            self.context_menu.post(event.x_root, event.y_root)
+
+    def _on_f2(self, event=None):
+        """Triggers rename on the currently selected folder."""
+        sel = self.tree.selection()
+        if not sel:
+            return "break"
+        folder_path = self.node_path_map.get(sel[0])
+        if folder_path and self.on_rename_callback:
+            self.on_rename_callback(folder_path)
+        return "break"
+
+    def _ctx_copy_path(self):
+        sel = self.tree.selection()
+        if sel:
+            folder_path = self.node_path_map.get(sel[0])
+            if folder_path:
+                self.clipboard_clear()
+                self.clipboard_append(folder_path)
+
+    def _ctx_open_explorer(self):
+        sel = self.tree.selection()
+        if sel:
+            folder_path = self.node_path_map.get(sel[0])
+            if folder_path and os.path.exists(folder_path):
+                import subprocess
+                subprocess.Popen(["explorer", os.path.normpath(folder_path)])
 
     def _populate_drives(self):
         """Discovers and populates system drives as root nodes."""

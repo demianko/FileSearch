@@ -228,6 +228,92 @@ class TestFileSearchApp(unittest.TestCase):
             mock_copy.assert_called_once_with([Path("dir/file1.pdf")])
             app.lbl_status.configure.assert_called()
 
+    def test_rename_selected_item_file(self):
+        import tempfile
+
+        app = FileSearchApp.__new__(FileSearchApp)
+        app.tree = MagicMock()
+        app.lbl_status = MagicMock()
+        app.search_engine = MagicMock()
+        app.search_engine.metadata_extractor.extract_publisher.return_value = "O'Reilly"
+        app.search_engine.metadata_extractor.extract_year.return_value = 2025
+        app.explorer_nav = MagicMock()
+        app.folder_path = MagicMock()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            orig_file = Path(tmp_dir) / "OldDocument.txt"
+            orig_file.write_text("sample")
+            item = FileItem(path=orig_file, year=2024, publisher="Packt", modified=100.0, is_directory=False)
+            app.results_map = {"1": item}
+            app.tree.selection.return_value = ("1",)
+
+            with patch.object(app, "_show_rename_dialog") as mock_show:
+                res = app.rename_selected_item()
+                self.assertEqual(res, "break")
+                mock_show.assert_called_once()
+                args, _ = mock_show.call_args
+                self.assertEqual(args[0], orig_file)
+                self.assertFalse(args[1])  # is_dir
+
+                # Simulate success callback
+                new_file = Path(tmp_dir) / "NewDocument.txt"
+                on_success = args[2]
+                on_success(orig_file, new_file)
+                self.assertEqual(item.path, new_file)
+                self.assertEqual(item.publisher, "O'Reilly")
+                self.assertEqual(item.year, 2025)
+                app.tree.item.assert_called_once()
+                app.lbl_status.configure.assert_called()
+
+    def test_rename_selected_item_folder(self):
+        import tempfile
+
+        app = FileSearchApp.__new__(FileSearchApp)
+        app.tree = MagicMock()
+        app.lbl_status = MagicMock()
+        app.explorer_nav = MagicMock()
+        app.folder_path = MagicMock()
+        app.save_current_config = MagicMock()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            orig_dir = Path(tmp_dir) / "OldFolder"
+            orig_dir.mkdir()
+            app.folder_path.get.return_value = str(orig_dir)
+            item = FileItem(path=orig_dir, year=0, publisher="Folder", modified=100.0, is_directory=True)
+            app.results_map = {"1": item}
+            app.tree.selection.return_value = ("1",)
+
+            with patch.object(app, "_show_rename_dialog") as mock_show:
+                res = app.rename_selected_item()
+                self.assertEqual(res, "break")
+                mock_show.assert_called_once()
+                args, _ = mock_show.call_args
+                self.assertEqual(args[0], orig_dir)
+                self.assertTrue(args[1])  # is_dir
+
+                # Simulate success callback
+                new_dir = Path(tmp_dir) / "NewFolder"
+                on_success = args[2]
+                on_success(orig_dir, new_dir)
+                self.assertEqual(item.path, new_dir)
+                app.folder_path.set.assert_called_with(str(new_dir))
+                app.save_current_config.assert_called()
+                app.explorer_nav.refresh.assert_called()
+                app.tree.item.assert_called_once()
+
+    def test_rename_nav_fallback_when_results_empty(self):
+        app = FileSearchApp.__new__(FileSearchApp)
+        app.tree = MagicMock()
+        app.tree.selection.return_value = ()
+        app.explorer_nav = MagicMock()
+        app.explorer_nav.tree.selection.return_value = ("node_1",)
+        app.explorer_nav.node_path_map = {"node_1": "C:\\MyFolder\\Sub"}
+        app._on_nav_folder_rename = MagicMock()
+
+        res = app.rename_selected_item()
+        self.assertEqual(res, "break")
+        app._on_nav_folder_rename.assert_called_once_with("C:\\MyFolder\\Sub")
+
 
 if __name__ == "__main__":
     unittest.main()
